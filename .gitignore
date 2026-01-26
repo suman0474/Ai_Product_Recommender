@@ -16,3 +16,4 @@ coverage/
 *.md
 !README.md
 static/images/
+retry_times.txt
