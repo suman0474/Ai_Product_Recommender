@@ -50,7 +50,6 @@ from .standards_rag.standards_rag_enrichment import (
 )
 
 import os
-from dotenv import load_dotenv
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import JsonOutputParser
 from .llm_manager import get_cached_llm
@@ -60,8 +59,6 @@ from prompts_library import load_prompt_sections
 import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from utils.workflow_sync import with_workflow_lock
-
-load_dotenv()
 logger = logging.getLogger(__name__)
 
 

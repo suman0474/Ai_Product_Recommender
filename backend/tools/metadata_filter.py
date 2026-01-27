@@ -6,10 +6,6 @@ import logging
 import re
 from typing import Dict, Any, List, Optional, Set
 from concurrent.futures import ThreadPoolExecutor, as_completed
-
-from dotenv import load_dotenv
-
-load_dotenv()
 logger = logging.getLogger(__name__)
 
 

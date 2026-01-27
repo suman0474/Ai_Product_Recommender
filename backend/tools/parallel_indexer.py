@@ -8,10 +8,6 @@ from typing import Dict, Any, List, Optional
 from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError
 from datetime import datetime
 import time
-
-from dotenv import load_dotenv
-
-load_dotenv()
 logger = logging.getLogger(__name__)
 
 

@@ -1,5 +1,4 @@
 from typing import IO, List, Dict, Any
-from dotenv import load_dotenv
 import os
 import json
 import re
@@ -13,9 +12,6 @@ from langchain_core.prompts import PromptTemplate
 # REMOVED: LLM standardization import (llm_standardization)
 
 print("1. Loading .env file...")
-load_dotenv()
-
-
 ### REMOVED: identify_and_save_product_image function ###
 
 # ---

@@ -11,14 +11,10 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import JsonOutputParser
 
 import os
-from dotenv import load_dotenv
-
 # Import existing infrastructure
 from agentic.vector_store import get_vector_store
 from llm_fallback import create_llm_with_fallback
 from prompts_library import load_prompt_sections
-
-load_dotenv()
 logger = logging.getLogger(__name__)
 
 

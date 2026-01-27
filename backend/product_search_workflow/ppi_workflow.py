@@ -23,10 +23,6 @@ from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError as
 
 from langgraph.graph import StateGraph, END
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage
-
-from dotenv import load_dotenv
-load_dotenv()
-
 logger = logging.getLogger(__name__)
 
 

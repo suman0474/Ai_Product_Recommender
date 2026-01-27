@@ -17,7 +17,6 @@ from typing import Dict, Any, Optional, List, Callable, TypeVar, Union
 from enum import Enum
 from functools import wraps
 
-from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 
 # LangChain imports
@@ -34,8 +33,6 @@ from langgraph.prebuilt import create_react_agent
 from llm_fallback import create_llm_with_fallback
 from .llm_manager import get_cached_llm
 import prompts
-
-load_dotenv()
 logger = logging.getLogger(__name__)
 
 

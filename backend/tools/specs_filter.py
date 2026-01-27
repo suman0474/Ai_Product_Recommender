@@ -4,10 +4,6 @@
 
 import logging
 from typing import Dict, Any, List, Optional
-
-from dotenv import load_dotenv
-
-load_dotenv()
 logger = logging.getLogger(__name__)
 
 

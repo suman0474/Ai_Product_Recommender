@@ -22,6 +22,12 @@ import threading
 logger = logging.getLogger(__name__)
 
 # =============================================================================
+# ENRICHMENT REQUIREMENTS (FIX #2 & #3)
+# =============================================================================
+# Minimum number of specifications required for complete enrichment
+MIN_STANDARDS_SPECS_COUNT = 30
+
+# =============================================================================
 # PRODUCT TYPE CACHE (Performance Optimization)
 # =============================================================================
 
@@ -311,57 +317,137 @@ def validate_items_against_domain_standards(
             item_product_type = item.get("category") or item.get("name") or "instrument"
             item_name = item.get("name") or item.get("product_name") or "Unknown"
 
-            # 🔥 FIX #1 STEP 1: Check if item was enriched via phase3_optimized 🔥
-            # If so, SKIP RAG entirely - validation is just type checking
+            # 🔥 FIX #2 CRITICAL: Verify Phase3 enrichment actually reached minimum specs 🔥
+            # Previously: SKIPPED RAG for ANY item with enrichment_source == "phase3_optimized"
+            # Problem: Items marked phase3_optimized but only had 10-15 specs (< 30 minimum)
+            # Fix: Check total_specs_count >= MIN_STANDARDS_SPECS_COUNT before skipping
             if item.get("enrichment_source") == "phase3_optimized":
-                logger.info(f"[StandardsValidation] SKIPPING RAG for {item_name} - enriched via phase3 (saves 40-50s!)")
-                validation_result["cache_hits"] += 1
+                total_specs_count = item.get("standards_info", {}).get("total_specs_count", 0)
 
-                # Just do lightweight validation, no RAG needed
-                cached_specs = item.get("standards_specifications", {})
-                if cached_specs.get("applicable_standards"):
-                    logger.debug(f"[StandardsValidation] {item_name} is phase3 optimized with {len(cached_specs.get('applicable_standards', []))} standards")
-                continue
+                # CRITICAL: Verify specs meet minimum before skipping RAG
+                if total_specs_count >= MIN_STANDARDS_SPECS_COUNT:
+                    logger.info(
+                        f"[StandardsValidation] SKIPPING RAG for {item_name} - enriched via phase3 "
+                        f"with {total_specs_count} specs (saves 40-50s!)"
+                    )
+                    validation_result["cache_hits"] += 1
 
-            # 🔥 FIX #4 STEP 2: Check if item already has cached standards_specifications 🔥
-            # If Phase 3 enrichment populated this field, use it instead of re-running RAG
-            if item.get("standards_specifications"):
-                logger.info(f"[StandardsValidation] Using CACHED standards for {item_name} (lightweight validation only)")
-                validation_result["cache_hits"] += 1
-
-                # Build validation from cached standards
-                cached_specs = item.get("standards_specifications", {})
-                requirements = {
-                    "product_type": item_product_type,
-                    "specifications": cached_specs,
-                }
-
-                # Add safety requirements if provided
-                if safety_requirements:
-                    if safety_requirements.get("sil_level"):
-                        requirements["sil_level"] = safety_requirements["sil_level"]
-                    if safety_requirements.get("hazardous_area"):
-                        requirements["hazardous_area"] = True
-                    if safety_requirements.get("atex_zone"):
-                        requirements["atex_zone"] = safety_requirements["atex_zone"]
-
-                # Simple validation logic (no RAG needed!)
-                try:
-                    # Check if certifications are specified
-                    user_certs = cached_specs.get("certifications", [])
-                    if not user_certs:
-                        validation_result["recommendations"].append({
-                            "item": item_name,
-                            "category": "certifications",
-                            "recommendation": "Verify required certifications are specified"
-                        })
-
-                    # Mark as compliant if we have standards info
+                    # Just do lightweight validation, no RAG needed
+                    cached_specs = item.get("standards_specifications", {})
                     if cached_specs.get("applicable_standards"):
-                        logger.debug(f"[StandardsValidation] {item_name} has {len(cached_specs.get('applicable_standards', []))} applicable standards")
+                        logger.debug(
+                            f"[StandardsValidation] {item_name} is phase3 optimized with "
+                            f"{len(cached_specs.get('applicable_standards', []))} standards"
+                        )
+                    continue
+                else:
+                    # CRITICAL FIX: Phase3 marked but insufficient specs - need RAG
+                    logger.warning(
+                        f"[StandardsValidation] Phase3 enrichment incomplete for {item_name}: "
+                        f"only {total_specs_count} specs (minimum: {MIN_STANDARDS_SPECS_COUNT}). "
+                        f"Will run RAG for completion."
+                    )
+                    # Fall through to RAG path below
 
-                except Exception as e:
-                    logger.warning(f"[StandardsValidation] Simple validation failed for {item_product_type}: {e}")
+            # 🔥 FIX #3 CRITICAL: Verify cached standards are sufficient before using them 🔥
+            # Previously: Used ANY cached standards_specifications without checking spec count
+            # Problem: Items with 10 standards specs treated as complete when they need 30+
+            # Fix: Check total_specs_count >= MIN_STANDARDS_SPECS_COUNT before accepting cache
+            if item.get("standards_specifications"):
+                total_specs_count = item.get("standards_info", {}).get("total_specs_count", 0)
+                cached_specs = item.get("standards_specifications", {})
+
+                # CRITICAL: Verify cached specs are sufficient
+                if total_specs_count >= MIN_STANDARDS_SPECS_COUNT:
+                    logger.info(
+                        f"[StandardsValidation] Using CACHED standards for {item_name} - "
+                        f"{total_specs_count} specs (lightweight validation only)"
+                    )
+                    validation_result["cache_hits"] += 1
+
+                    requirements = {
+                        "product_type": item_product_type,
+                        "specifications": cached_specs,
+                    }
+
+                    # Add safety requirements if provided
+                    if safety_requirements:
+                        if safety_requirements.get("sil_level"):
+                            requirements["sil_level"] = safety_requirements["sil_level"]
+                        if safety_requirements.get("hazardous_area"):
+                            requirements["hazardous_area"] = True
+                        if safety_requirements.get("atex_zone"):
+                            requirements["atex_zone"] = safety_requirements["atex_zone"]
+
+                    # Simple validation logic (no RAG needed!)
+                    try:
+                        # Check if certifications are specified
+                        user_certs = cached_specs.get("certifications", [])
+                        if not user_certs:
+                            validation_result["recommendations"].append({
+                                "item": item_name,
+                                "category": "certifications",
+                                "recommendation": "Verify required certifications are specified"
+                            })
+
+                        # Mark as compliant if we have standards info
+                        if cached_specs.get("applicable_standards"):
+                            logger.debug(f"[StandardsValidation] {item_name} has {len(cached_specs.get('applicable_standards', []))} applicable standards")
+
+                    except Exception as e:
+                        logger.warning(f"[StandardsValidation] Simple validation failed for {item_product_type}: {e}")
+
+                else:
+                    # CRITICAL FIX: Cached specs insufficient - treat as cache miss and run RAG
+                    logger.info(
+                        f"[StandardsValidation] Cached standards insufficient for {item_name}: "
+                        f"only {total_specs_count} specs (minimum: {MIN_STANDARDS_SPECS_COUNT}). "
+                        f"Running RAG for completion."
+                    )
+                    validation_result["cache_misses"] += 1
+
+                    # Build requirements dict from item
+                    requirements = {
+                        "product_type": item_product_type,
+                        "specifications": item.get("specifications", {}),
+                    }
+
+                    # Add safety requirements if provided
+                    if safety_requirements:
+                        if safety_requirements.get("sil_level"):
+                            requirements["sil_level"] = safety_requirements["sil_level"]
+                        if safety_requirements.get("hazardous_area"):
+                            requirements["hazardous_area"] = True
+                        if safety_requirements.get("atex_zone"):
+                            requirements["atex_zone"] = safety_requirements["atex_zone"]
+
+                    # Validate against standards (this will run RAG)
+                    try:
+                        val_result = validate_requirements_against_standards(
+                            product_type=item_product_type,
+                            requirements=requirements
+                        )
+
+                        if not val_result.get("is_compliant"):
+                            validation_result["is_compliant"] = False
+                            validation_result["compliance_issues"].extend([
+                                {
+                                    "item": item_name,
+                                    **issue
+                                }
+                                for issue in val_result.get("compliance_issues", [])
+                            ])
+
+                        validation_result["recommendations"].extend([
+                            {
+                                "item": item_name,
+                                **rec
+                            }
+                            for rec in val_result.get("recommendations", [])
+                        ])
+
+                    except Exception as e:
+                        logger.warning(f"[StandardsValidation] Validation failed for {item_product_type}: {e}")
 
             else:
                 # 🔥 FIX #4 STEP 2: Cache miss - only then run RAG 🔥

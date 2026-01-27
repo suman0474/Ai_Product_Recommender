@@ -17,8 +17,6 @@ from pydantic import BaseModel, Field
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import JsonOutputParser
 from langchain_core.exceptions import OutputParserException
-from dotenv import load_dotenv
-
 from llm_fallback import create_llm_with_fallback
 from .llm_manager import get_cached_llm
 from prompts_library import load_prompt, load_prompt_sections
@@ -33,9 +31,6 @@ from .intent_classification_routing_agent import (
 
 # Import DataSource from product_info_intent_agent for convenience
 from .product_info_intent_agent import DataSource as IntentDataSource
-
-load_dotenv()
-
 logger = logging.getLogger(__name__)
 
 

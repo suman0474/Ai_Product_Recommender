@@ -14,10 +14,7 @@ from ..shared_agents import ResponseValidatorAgent
 from ..checkpointing import compile_with_checkpointing
 
 import os
-from dotenv import load_dotenv
 from llm_fallback import create_llm_with_fallback
-
-load_dotenv()
 logger = logging.getLogger(__name__)
 
 

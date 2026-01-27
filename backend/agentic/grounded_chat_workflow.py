@@ -17,14 +17,11 @@ from tools.intent_tools import classify_intent_tool
 from tools.schema_tools import load_schema_tool
 
 import os
-from dotenv import load_dotenv
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import JsonOutputParser
 from .llm_manager import get_cached_llm
 from prompts_library import load_prompt
-
-load_dotenv()
 logger = logging.getLogger(__name__)
 
 

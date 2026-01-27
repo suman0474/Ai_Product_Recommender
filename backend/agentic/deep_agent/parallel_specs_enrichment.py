@@ -20,8 +20,6 @@ from typing import Dict, Any, List, Optional
 from datetime import datetime
 from uuid import uuid4
 
-from dotenv import load_dotenv
-
 # Local imports (within deep_agent package)
 from .memory import (
     DeepAgentMemory,
@@ -31,8 +29,6 @@ from .memory import (
 from .llm_specs_generator import extract_user_specified_specs, generate_llm_specs
 from .standards_deep_agent import run_standards_deep_agent_batch
 from .spec_output_normalizer import normalize_specification_output, normalize_key
-
-load_dotenv()
 logger = logging.getLogger(__name__)
 
 

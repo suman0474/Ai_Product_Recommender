@@ -1,3 +1,14 @@
+# PHASE 1 FIX: Initialize application FIRST (loads environment once)
+from initialization import initialize_application
+
+# Initialize before any other imports that depend on environment variables
+try:
+    initialize_application()
+except RuntimeError as e:
+    print(f"FATAL: Application initialization failed: {e}")
+    print("Please check your .env file and environment variables")
+    exit(1)
+
 import asyncio
 from datetime import datetime
 from flask import Flask, request, jsonify, session, send_file
@@ -17,11 +28,6 @@ import csv
 from fuzzywuzzy import fuzz, process
 
 from functools import wraps
-from dotenv import load_dotenv
-
-# Load environment variables immediately
-load_dotenv()
-
 # Suppress noisy Azure SDK logs
 logging.getLogger("azure.core.pipeline.policies.http_logging_policy").setLevel(logging.WARNING)
 logging.getLogger("azure.identity").setLevel(logging.WARNING)
@@ -121,8 +127,6 @@ swagger_config = {
 
 
 # Load environment variables
-load_dotenv()
-
 # =========================================================================
 # === FLASK APP CONFIGURATION ===
 # =========================================================================
@@ -2402,30 +2406,33 @@ def search_vendors():
 # =========================================================================
 # === API ENDPOINTS ===
 # =========================================================================
+# PHASE 1 FIX: Use API Key Manager instead of hardcoded fallbacks
+from config.api_key_manager import api_key_manager
+
 SERPER_API_KEY = os.getenv("SERPER_API_KEY")
 SERPAPI_KEY = os.getenv("SERPAPI_KEY")
-GOOGLE_API_KEY1 = os.getenv("GOOGLE_API_KEY1")
-GOOGLE_CSE_ID = "066b7345f94f64897"
 
-# Image search API configuration
-GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY1")  # Use GOOGLE_API_KEY1 for custom search
-GOOGLE_CX = os.getenv("GOOGLE_CX", GOOGLE_CSE_ID)  # Custom search engine ID
-SERPER_API_KEY_IMAGES = os.getenv("SERPER_API_KEY", SERPER_API_KEY)  # Reuse existing key
+# PHASE 1 FIX: Get Google API key from centralized manager
+GOOGLE_API_KEY = api_key_manager.get_current_google_key()
 
+# PHASE 1 FIX: No hardcoded fallback - use only environment variable
+GOOGLE_CX = os.getenv("GOOGLE_CX")
+
+# Image search configuration
+SERPER_API_KEY_IMAGES = SERPER_API_KEY  # Use same key for images
+
+# Validation warnings (no silent fallbacks)
 if not SERPER_API_KEY:
-    logging.warning("SERPER_API_KEY environment variable not set! Will fallback to SERP API.")
+    logging.warning("SERPER_API_KEY environment variable not set! Image search via Serper will be unavailable.")
 
 if not SERPAPI_KEY:
-    logging.warning("SERPAPI_KEY environment variable not set! Will use Google Custom Search as fallback.")
-
-if not GOOGLE_API_KEY1:
-    logging.warning("GOOGLE_API_KEY1 environment variable not set! Custom search fallback not available.")
+    logging.warning("SERPAPI_KEY environment variable not set! SerpAPI fallback will be unavailable.")
 
 if not GOOGLE_API_KEY:
-    logging.warning("GOOGLE_API_KEY environment variable not set! Image search functionality limited.")
+    logging.warning("GOOGLE_API_KEY environment variable not set! Google Custom Search will be unavailable.")
 
 if not GOOGLE_CX:
-    logging.warning("GOOGLE_CX environment variable not set! Custom image search not available.")
+    logging.warning("GOOGLE_CX environment variable not set! Custom search engine not configured.")
 
 
 def serper_search_pdfs(query):
@@ -2493,23 +2500,24 @@ def serpapi_search_pdfs(query):
 
 def google_custom_search_pdfs(query):
     """Perform a PDF search with Google Custom Search API as fallback."""
-    if not GOOGLE_API_KEY1 or not GOOGLE_CSE_ID:
+    # PHASE 1 FIX: Use centralized API key configuration
+    if not GOOGLE_API_KEY or not GOOGLE_CX:
         return []
-    
+
     try:
         import threading
         from googleapiclient.discovery import build
-        
-        service = build("customsearch", "v1", developerKey=GOOGLE_API_KEY1)
-        
+
+        service = build("customsearch", "v1", developerKey=GOOGLE_API_KEY)
+
         result_container = [None]
         exception_container = [None]
-        
+
         def google_request():
             try:
                 result = service.cse().list(
                     q=f"{query} filetype:pdf",
-                    cx=GOOGLE_CSE_ID,
+                    cx=GOOGLE_CX,
                     num=10,
                     fileType='pdf'
                 ).execute()
@@ -2767,23 +2775,24 @@ def fetch_price_and_reviews_serper(product_name: str):
 
 def fetch_price_and_reviews_google_custom(product_name: str):
     """Use Google Custom Search to fetch price and review info for a product as fallback."""
-    if not GOOGLE_API_KEY1 or not GOOGLE_CSE_ID:
+    # PHASE 1 FIX: Use centralized API key configuration
+    if not GOOGLE_API_KEY or not GOOGLE_CX:
         return []
-    
+
     try:
         import threading
         from googleapiclient.discovery import build
-        
-        service = build("customsearch", "v1", developerKey=GOOGLE_API_KEY1)
-        
+
+        service = build("customsearch", "v1", developerKey=GOOGLE_API_KEY)
+
         result_container = [None]
         exception_container = [None]
-        
+
         def google_request():
             try:
                 result = service.cse().list(
                     q=f"{product_name} price review",
-                    cx=GOOGLE_CSE_ID,
+                    cx=GOOGLE_CX,
                     num=10
                 ).execute()
                 result_container[0] = result.get('items', [])

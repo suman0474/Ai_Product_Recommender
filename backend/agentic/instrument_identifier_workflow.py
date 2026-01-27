@@ -29,13 +29,10 @@ from tools.instrument_tools import identify_instruments_tool, identify_accessori
 from .standards_rag.standards_rag_enrichment import enrich_identified_items_with_standards
 
 import os
-from dotenv import load_dotenv
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import JsonOutputParser
 from .llm_manager import get_cached_llm
 from prompts_library import load_prompt
-
-load_dotenv()
 logger = logging.getLogger(__name__)
 
 

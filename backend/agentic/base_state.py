@@ -340,6 +340,113 @@ def merge_states(
 
 
 # =============================================================================
+# PHASE 2 FIX: STATE UPDATE/MERGE FUNCTIONS
+# =============================================================================
+
+def update_base_rag_state(
+    existing_state: Dict[str, Any],
+    **updates
+) -> Dict[str, Any]:
+    """
+    Update existing state with new values - PRESERVES existing fields.
+
+    PHASE 2 FIX: Use this instead of create_base_rag_state() when modifying state.
+    This preserves workflow modifications instead of overwriting everything.
+
+    Args:
+        existing_state: Current state dictionary
+        **updates: Fields to update
+
+    Returns:
+        Updated state with preserved fields
+
+    Example:
+        state = create_base_rag_state("question")
+        state["resolved_question"] = "processed"
+        state["answer"] = "partial answer"
+
+        # Later, update confidence without losing previous fields:
+        state = update_base_rag_state(state, confidence=0.9)
+        # resolved_question and answer are still there!
+
+    Raises:
+        ValueError: If existing_state is None or empty
+    """
+    if not existing_state:
+        raise ValueError("existing_state cannot be None or empty")
+
+    # Create shallow copy to avoid mutating original
+    updated_state = copy_state(existing_state)
+
+    # Merge updates
+    updated_state.update(updates)
+
+    return updated_state
+
+
+def merge_base_rag_state(
+    base_state: Dict[str, Any],
+    partial_state: Dict[str, Any],
+    deep_merge_keys: Optional[List[str]] = None
+) -> Dict[str, Any]:
+    """
+    Deep merge two state dictionaries - useful for merging workflow results.
+
+    PHASE 2 FIX: Handles nested structures (dicts/lists) intelligently.
+
+    Args:
+        base_state: Base state dictionary
+        partial_state: Partial updates to merge
+        deep_merge_keys: Keys that should be deep-merged instead of replaced
+                        (e.g., ['metadata', 'analysis_results'])
+
+    Returns:
+        Merged state with proper nesting
+
+    Example:
+        base = create_base_rag_state("question")
+        base["metadata"] = {"source": "pinecone", "version": 1}
+
+        partial = {
+            "metadata": {"retrieved_docs": 5},  # Will merge, not replace
+            "confidence": 0.85
+        }
+
+        merged = merge_base_rag_state(
+            base,
+            partial,
+            deep_merge_keys=["metadata"]
+        )
+        # merged["metadata"] = {
+        #     "source": "pinecone",
+        #     "version": 1,
+        #     "retrieved_docs": 5
+        # }
+    """
+    if deep_merge_keys is None:
+        deep_merge_keys = []
+
+    merged = copy_state(base_state)
+
+    for key, value in partial_state.items():
+        if key in deep_merge_keys and key in merged:
+            # Deep merge for specified keys
+            if isinstance(merged[key], dict) and isinstance(value, dict):
+                merged[key] = {**merged[key], **value}
+            elif isinstance(merged[key], list) and isinstance(value, list):
+                # Extend lists instead of replacing
+                merged[key] = merged[key] + value
+            else:
+                # Can't deep merge - replace
+                merged[key] = value
+        else:
+            # Replace value normally
+            merged[key] = value
+
+    return merged
+
+
+# =============================================================================
 # EXPORTS
 # =============================================================================
 
@@ -359,5 +466,9 @@ __all__ = [
 
     # Copy utilities
     'copy_state',
-    'merge_states'
+    'merge_states',
+
+    # PHASE 2 FIX: New merge functions
+    'update_base_rag_state',
+    'merge_base_rag_state'
 ]

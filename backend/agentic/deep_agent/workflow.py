@@ -48,9 +48,6 @@ from .spec_output_normalizer import (
 
 import os
 import re
-from dotenv import load_dotenv
-
-load_dotenv()
 logger = logging.getLogger(__name__)
 
 

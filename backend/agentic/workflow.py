@@ -27,9 +27,6 @@ from tools.analysis_tools import analyze_vendor_match_tool
 from tools.ranking_tools import rank_products_tool
 
 import os
-from dotenv import load_dotenv
-
-load_dotenv()
 logger = logging.getLogger(__name__)
 
 

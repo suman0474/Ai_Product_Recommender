@@ -18,11 +18,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from dotenv import load_dotenv
 from .embedding_batch_processor import get_batch_processor
 from .embedding_cache_manager import get_embedding_cache
-
-load_dotenv()
 logger = logging.getLogger(__name__)
 
 # Environment configuration

@@ -15,13 +15,10 @@ import requests
 from serpapi.google_search import GoogleSearch
 from googleapiclient.discovery import build
 from langchain_core.runnables import RunnableLambda
-from dotenv import load_dotenv
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import wraps
 
 # Load environment variables from .env file
-load_dotenv()
-
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)

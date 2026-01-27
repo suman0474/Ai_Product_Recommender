@@ -71,7 +71,8 @@ class BaseLRUCache(Generic[K, V]):
         self,
         max_size: int = 1000,
         ttl_seconds: Optional[int] = None,
-        name: str = "LRUCache"
+        name: str = "LRUCache",
+        require_admin: bool = False
     ):
         """
         Initialize the cache.
@@ -80,6 +81,7 @@ class BaseLRUCache(Generic[K, V]):
             max_size: Maximum number of entries (default: 1000)
             ttl_seconds: Time-to-live in seconds, None for no expiration
             name: Name for logging purposes
+            require_admin: If True, require admin token to clear cache (PHASE 2 FIX)
         """
         self.max_size = max_size
         self.ttl_seconds = ttl_seconds
@@ -97,6 +99,10 @@ class BaseLRUCache(Generic[K, V]):
             "expirations": 0,
             "puts": 0
         }
+
+        # PHASE 2 FIX: Protection against accidental cache clears
+        self._require_admin = require_admin
+        self._admin_token = None
 
         logger.info(
             f"[{self.name}] Initialized: max_size={max_size}, "
@@ -327,18 +333,66 @@ class BaseLRUCache(Generic[K, V]):
     # MAINTENANCE
     # =========================================================================
 
-    def clear(self) -> int:
+    def clear(self, admin_token: Optional[str] = None) -> int:
         """
         Clear all entries from the cache.
 
+        PHASE 2 FIX: If cache is protected, requires admin token.
+
+        Args:
+            admin_token: Admin token (required if cache is protected)
+
         Returns:
             Number of entries cleared
+
+        Raises:
+            PermissionError: If cache is protected and token is invalid
         """
+        # PHASE 2 FIX: Check admin token if cache is protected
+        if self._require_admin:
+            if admin_token != self._admin_token:
+                raise PermissionError(
+                    f"Cannot clear protected cache '{self.name}' without valid admin token"
+                )
+
         with self._lock:
             count = len(self._cache)
             self._cache.clear()
-            logger.info(f"[{self.name}] Cleared {count} entries")
+            logger.warning(f"[{self.name}] Cleared {count} entries (admin: {bool(admin_token)})")
             return count
+
+    def set_admin_token(self, token: str) -> None:
+        """
+        Set admin token required for protected operations.
+
+        PHASE 2 FIX: Call this during initialization to enable cache protection.
+
+        Args:
+            token: Admin token (should come from environment variable)
+
+        Example:
+            from advanced_parameters import SCHEMA_PARAM_CACHE
+            import os
+
+            cache_admin_token = os.getenv("CACHE_ADMIN_TOKEN")
+            if cache_admin_token:
+                SCHEMA_PARAM_CACHE.set_admin_token(cache_admin_token)
+                logger.info("Cache protected with admin token")
+        """
+        with self._lock:
+            self._admin_token = token
+            logger.info(f"[{self.name}] Admin token set (protection enabled)")
+
+    def reset_stats(self) -> None:
+        """Reset statistics counters."""
+        with self._lock:
+            self._stats = {
+                "hits": 0,
+                "misses": 0,
+                "expirations": 0,
+                "evictions": 0,
+                "puts": 0
+            }
 
     def cleanup_expired(self) -> int:
         """

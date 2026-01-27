@@ -2,52 +2,57 @@
 LLM Fallback Utility
 Provides automatic fallback from Google Gemini to OpenAI when Gemini fails
 Includes timeout support for LLM calls
+
+PHASE 1 FIX: Uses centralized API Key Manager instead of global state
 """
 import os
 import logging
 import threading
 from typing import Optional, Any
 from functools import wraps
-from dotenv import load_dotenv
-
-# Load environment variables
-load_dotenv()
 
 logger = logging.getLogger(__name__)
 
-# API Keys - Support for multiple Google API keys for rotation
-GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-
-# Load all available Google API keys for rotation (handles quota exhaustion)
-GOOGLE_API_KEYS = []
-if GOOGLE_API_KEY:
-    GOOGLE_API_KEYS.append(GOOGLE_API_KEY)
-# Load additional keys: GOOGLE_API_KEY2, GOOGLE_API_KEY3, etc.
-for i in range(2, 11):  # Support up to 10 keys
-    key = os.getenv(f"GOOGLE_API_KEY{i}")
-    if key:
-        GOOGLE_API_KEYS.append(key)
-
-# Track current key index for rotation
-_current_key_index = 0
+# PHASE 1 FIX: Use centralized API Key Manager
+# Replaces global state with thread-safe singleton
+try:
+    from config.api_key_manager import api_key_manager
+    GOOGLE_API_KEY = api_key_manager.get_current_google_key()
+    OPENAI_API_KEY = api_key_manager.get_openai_key()
+    GOOGLE_API_KEYS = [api_key_manager.get_google_key_by_index(i)
+                       for i in range(api_key_manager.get_google_key_count())]
+except ImportError:
+    # Fallback if api_key_manager not available (initialization phase)
+    logger.warning("[LLM_FALLBACK] API Key Manager not available, using environment variables directly")
+    GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
+    OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+    GOOGLE_API_KEYS = [GOOGLE_API_KEY] if GOOGLE_API_KEY else []
 
 def get_current_google_api_key() -> str:
-    """Get the current Google API key based on rotation index."""
-    global _current_key_index
-    if not GOOGLE_API_KEYS:
+    """
+    Get the current Google API key.
+    PHASE 1 FIX: Uses API Key Manager instead of global state.
+    """
+    try:
+        from config.api_key_manager import api_key_manager
+        return api_key_manager.get_current_google_key() or ""
+    except ImportError:
         return GOOGLE_API_KEY or ""
-    return GOOGLE_API_KEYS[_current_key_index % len(GOOGLE_API_KEYS)]
 
 def rotate_google_api_key() -> bool:
-    """Rotate to the next available Google API key. Returns True if rotation succeeded."""
-    global _current_key_index
-    if len(GOOGLE_API_KEYS) <= 1:
+    """
+    Rotate to the next available Google API key.
+    PHASE 1 FIX: Uses API Key Manager (thread-safe) instead of global state.
+
+    Returns:
+        True if rotation succeeded, False if only one key available
+    """
+    try:
+        from config.api_key_manager import api_key_manager
+        return api_key_manager.rotate_google_key()
+    except ImportError:
+        logger.warning("[LLM_FALLBACK] API Key Manager not available, cannot rotate")
         return False
-    old_idx = _current_key_index
-    _current_key_index = (_current_key_index + 1) % len(GOOGLE_API_KEYS)
-    logger.info(f"[LLM_FALLBACK] 🔄 Rotated API key: #{old_idx + 1} -> #{_current_key_index + 1} (of {len(GOOGLE_API_KEYS)})")
-    return True
 
 # Log available keys at startup
 if len(GOOGLE_API_KEYS) > 1:

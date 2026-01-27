@@ -24,8 +24,6 @@ import threading
 
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import JsonOutputParser
-from dotenv import load_dotenv
-
 from llm_fallback import create_llm_with_fallback
 from prompts_library import load_prompt_sections
 
@@ -39,9 +37,7 @@ from .memory import (
     SpecificationSource
 )
 from .spec_output_normalizer import normalize_specification_output, normalize_key
-from .standards_deep_agent import run_standards_deep_agent_batch
-
-load_dotenv()
+from .standards_deep_agent import run_standards_deep_agent_batch, MIN_STANDARDS_SPECS_COUNT
 logger = logging.getLogger(__name__)
 
 
@@ -664,8 +660,25 @@ def run_optimized_parallel_enrichment(
         enriched_item["user_specified_specs"] = user_specs
         enriched_item["llm_generated_specs"] = llm_specs
         enriched_item["standards_specifications"] = standards_specs
-        # [FIX #1] Mark as phase3_optimized so validation can skip RAG re-run (saves 2000+ seconds!)
-        enriched_item["enrichment_source"] = "phase3_optimized"
+
+        # [FIX #1] CRITICAL: Only mark as phase3_optimized if we actually got sufficient specs
+        # Previously: unconditionally set "phase3_optimized" regardless of spec count
+        # Now: verify total_specs_count >= MIN_STANDARDS_SPECS_COUNT before marking complete
+        total_specs = len(merged_specs)
+        if total_specs >= MIN_STANDARDS_SPECS_COUNT:
+            enriched_item["enrichment_source"] = "phase3_optimized"
+            logger.info(
+                f"[OPT_PARALLEL] Item '{item.get('name', 'Unknown')}' reached minimum specs "
+                f"({total_specs}/{MIN_STANDARDS_SPECS_COUNT})"
+            )
+        else:
+            # Item incomplete - needs additional enrichment (RAG will run)
+            enriched_item["enrichment_source"] = "phase3_partial"
+            logger.warning(
+                f"[OPT_PARALLEL] Item '{item.get('name', 'Unknown')}' has only {total_specs} specs "
+                f"(minimum: {MIN_STANDARDS_SPECS_COUNT}) - will need RAG enrichment"
+            )
+
         enriched_item["combined_specifications"] = {k: v for k, v in merged_specs.items()}
         
         # ✅ FIX: Include source labels in specifications output

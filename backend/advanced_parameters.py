@@ -11,7 +11,6 @@ from collections import OrderedDict
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
-from dotenv import load_dotenv
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_google_genai import ChatGoogleGenerativeAI
@@ -29,13 +28,20 @@ class BoundedTTLCache:
     """
     Thread-safe cache with TTL expiration and LRU eviction when max size is reached.
     Prevents unbounded memory growth while maintaining recent entries.
+
+    PHASE 2 FIX: Added optional admin token protection to prevent accidental clears.
     """
 
-    def __init__(self, max_size: int = 500, ttl_minutes: int = 10):
+    def __init__(self, max_size: int = 500, ttl_minutes: int = 10, name: str = "BoundedTTLCache", require_admin: bool = False):
         self._cache: OrderedDict[str, Dict[str, Any]] = OrderedDict()
         self._max_size = max_size
         self._ttl_minutes = ttl_minutes
+        self.name = name  # For logging
         self._lock = threading.Lock()
+
+        # PHASE 2 FIX: Protection against accidental cache clears
+        self._require_admin = require_admin
+        self._admin_token = None
 
     def get(self, key: str) -> Optional[Any]:
         """Get item from cache if exists and not expired."""
@@ -81,14 +87,64 @@ class BoundedTTLCache:
         with self._lock:
             return len(self._cache)
 
+    def clear(self, admin_token: Optional[str] = None) -> int:
+        """
+        Clear all entries from the cache.
+
+        PHASE 2 FIX: If cache is protected, requires admin token.
+
+        Args:
+            admin_token: Admin token (required if cache is protected)
+
+        Returns:
+            Number of entries cleared
+
+        Raises:
+            PermissionError: If cache is protected and token is invalid
+        """
+        # Check admin token if cache is protected
+        if self._require_admin:
+            if admin_token != self._admin_token:
+                raise PermissionError(
+                    f"Cannot clear protected cache '{self.name}' without valid admin token"
+                )
+
+        with self._lock:
+            count = len(self._cache)
+            self._cache.clear()
+            logging.warning(f"[{self.name}] Cleared {count} entries (admin: {bool(admin_token)})")
+            return count
+
+    def set_admin_token(self, token: str) -> None:
+        """
+        Set admin token required for protected operations.
+
+        PHASE 2 FIX: Call this during initialization to enable cache protection.
+
+        Args:
+            token: Admin token (should come from environment variable)
+        """
+        with self._lock:
+            self._admin_token = token
+            logging.info(f"[{self.name}] Admin token set (protection enabled)")
+
 
 # Bounded caches with max 500 items each to prevent OOM
-IN_MEMORY_ADVANCED_SPEC_CACHE = BoundedTTLCache(max_size=500, ttl_minutes=IN_MEMORY_CACHE_TTL_MINUTES)
-SCHEMA_PARAM_CACHE = BoundedTTLCache(max_size=500, ttl_minutes=SCHEMA_CACHE_TTL_MINUTES)
+# PHASE 2 FIX: Added names and enabled admin token protection
+IN_MEMORY_ADVANCED_SPEC_CACHE = BoundedTTLCache(
+    max_size=500,
+    ttl_minutes=IN_MEMORY_CACHE_TTL_MINUTES,
+    name="IN_MEMORY_ADVANCED_SPEC_CACHE",
+    require_admin=True  # Protected - requires admin token to clear
+)
+SCHEMA_PARAM_CACHE = BoundedTTLCache(
+    max_size=500,
+    ttl_minutes=SCHEMA_CACHE_TTL_MINUTES,
+    name="SCHEMA_PARAM_CACHE",
+    require_admin=True  # Protected - requires admin token to clear
+)
 
 # Load environment variables
-load_dotenv()
-
 def _normalize_product_type(product_type: str) -> str:
     return re.sub(r"[^a-z0-9]", "", product_type.lower()) if product_type else ""
 

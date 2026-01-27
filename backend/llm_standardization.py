@@ -9,12 +9,9 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import JsonOutputParser
 from pydantic import BaseModel, Field
 import os
-from dotenv import load_dotenv
 from llm_fallback import create_llm_with_fallback
 
 # Load environment variables
-load_dotenv()
-
 class StandardizedResult(BaseModel):
     """Result of LLM standardization"""
     vendor: str = Field(description="Standardized vendor name", default="")

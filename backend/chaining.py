@@ -18,7 +18,6 @@ load_products_data = _load_products_runnable_instance.func
 _load_pdf_content_runnable_instance = load_pdf_content_runnable()
 load_pdf_content = _load_pdf_content_runnable_instance.func
 from azure_blob_utils import get_available_vendors, get_vendors_for_product_type
-from dotenv import load_dotenv
 
 # Import standardization utilities
 from standardization_utils import standardize_ranking_result
@@ -30,9 +29,7 @@ from llm_fallback import FallbackLLMClient
 from langchain_core.runnables import RunnableLambda
 from langchain_core.prompts import ChatPromptTemplate
 
-
-# Load environment variables
-load_dotenv()
+# PHASE 1 FIX: load_dotenv() removed - initialized once in initialization.py
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 

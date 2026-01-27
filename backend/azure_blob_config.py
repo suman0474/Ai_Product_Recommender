@@ -8,11 +8,7 @@ import json
 import logging
 from typing import Optional, Dict, Any, List
 from datetime import datetime
-from dotenv import load_dotenv
-
 # Load environment variables
-load_dotenv()
-
 logger = logging.getLogger(__name__)
 
 # Azure SDK imports
@@ -540,26 +536,131 @@ class AzureBlobGridFS:
             return False
 
 
+# =============================================================================
+# PHASE 2 FIX: SINGLETON COLLECTION MANAGEMENT
+# =============================================================================
+# Global cache for collection instances (prevents recreation on each call)
+import threading
+
+_collection_instances: Dict[str, Any] = {}
+_collection_lock = threading.Lock()
+_gridfs_instance: Optional['AzureBlobGridFS'] = None
+
+
+def get_azure_blob_collection(
+    collection_type: str,
+    force_new: bool = False
+) -> 'AzureBlobCollection':
+    """
+    Get singleton instance of Azure Blob collection.
+
+    PHASE 2 FIX: Returns same instance on repeated calls unless force_new=True.
+    This prevents recreation overhead and preserves configuration changes.
+
+    Args:
+        collection_type: Collection name (e.g., 'specs', 'vendors', 'images')
+        force_new: If True, create new instance (for testing)
+
+    Returns:
+        AzureBlobCollection instance (singleton)
+
+    Raises:
+        ValueError: If collection_type is unknown
+
+    Example:
+        # Get singleton specs collection
+        specs_collection = get_azure_blob_collection('specs')
+
+        # Configure it
+        specs_collection.cache_enabled = True
+
+        # Later, configuration persists
+        specs_again = get_azure_blob_collection('specs')
+        assert specs_again.cache_enabled == True  # Still configured!
+    """
+    global _collection_instances
+
+    with _collection_lock:
+        if force_new or collection_type not in _collection_instances:
+            container_client = azure_blob_manager.container_client
+            base_path = azure_blob_manager.base_path
+
+            # Map collection_type to Collections enum
+            collection_map = {
+                'specs': Collections.SPECS,
+                'vendors': Collections.VENDORS,
+                'advanced_parameters': Collections.ADVANCED_PARAMETERS,
+                'images': Collections.IMAGES,
+                'generic_images': Collections.GENERIC_IMAGES,
+                'vendor_logos': Collections.VENDOR_LOGOS,
+                'user_projects': Collections.USER_PROJECTS,
+                'files': Collections.FILES,
+                'documents': Collections.DOCUMENTS,
+            }
+
+            if collection_type not in collection_map:
+                raise ValueError(f"Unknown collection type: {collection_type}")
+
+            _collection_instances[collection_type] = AzureBlobCollection(
+                container_client,
+                base_path,
+                collection_map[collection_type]
+            )
+
+            logger.info(f"[AzureBlob] Created singleton collection: {collection_type}")
+
+        return _collection_instances[collection_type]
+
+
+def get_azure_blob_gridfs(force_new: bool = False) -> 'AzureBlobGridFS':
+    """
+    Get singleton instance of Azure Blob GridFS wrapper.
+
+    PHASE 2 FIX: Returns same instance on repeated calls.
+
+    Args:
+        force_new: If True, create new instance (for testing)
+
+    Returns:
+        AzureBlobGridFS instance (singleton)
+    """
+    global _gridfs_instance
+
+    with _collection_lock:
+        if force_new or _gridfs_instance is None:
+            container_client = azure_blob_manager.container_client
+            base_path = azure_blob_manager.base_path
+            _gridfs_instance = AzureBlobGridFS(container_client, base_path)
+            logger.info("[AzureBlob] Created singleton GridFS instance")
+
+        return _gridfs_instance
+
+
 def get_azure_blob_connection():
-    """Get Azure Blob connection components (MongoDB API compatible)"""
+    """
+    Get Azure Blob connection components (MongoDB API compatible).
+
+    PHASE 2 FIX: Returns singleton collection instances instead of creating new ones.
+    This ensures that configuration changes to collections persist across calls.
+    """
     container_client = azure_blob_manager.container_client
     base_path = azure_blob_manager.base_path
 
-    # Create collection wrappers
+    # PHASE 2 FIX: Return singleton collection instances
     collections = {
-        'specs': AzureBlobCollection(container_client, base_path, Collections.SPECS),
-        'vendors': AzureBlobCollection(container_client, base_path, Collections.VENDORS),
-        'advanced_parameters': AzureBlobCollection(container_client, base_path, Collections.ADVANCED_PARAMETERS),
-        'images': AzureBlobCollection(container_client, base_path, Collections.IMAGES),
-        'generic_images': AzureBlobCollection(container_client, base_path, Collections.GENERIC_IMAGES),
-        'vendor_logos': AzureBlobCollection(container_client, base_path, Collections.VENDOR_LOGOS),
-        'user_projects': AzureBlobCollection(container_client, base_path, Collections.USER_PROJECTS),
-        'files': AzureBlobCollection(container_client, base_path, Collections.FILES),
-        'documents': AzureBlobCollection(container_client, base_path, Collections.DOCUMENTS),
+        'specs': get_azure_blob_collection('specs'),
+        'vendors': get_azure_blob_collection('vendors'),
+        'advanced_parameters': get_azure_blob_collection('advanced_parameters'),
+        'images': get_azure_blob_collection('images'),
+        'generic_images': get_azure_blob_collection('generic_images'),
+        'vendor_logos': get_azure_blob_collection('vendor_logos'),
+        'user_projects': get_azure_blob_collection('user_projects'),
+        'files': get_azure_blob_collection('files'),
+        'documents': get_azure_blob_collection('documents'),
     }
 
-    # Create GridFS wrapper
-    gridfs = AzureBlobGridFS(container_client, base_path)
+    # Get singleton GridFS wrapper
+    gridfs = get_azure_blob_gridfs()
 
     return {
         'blob_service_client': azure_blob_manager.blob_service_client,

@@ -7,10 +7,6 @@ import time
 from typing import Dict, Any, List, Literal, Optional, TypedDict
 
 from langgraph.graph import StateGraph, END
-
-from dotenv import load_dotenv
-
-load_dotenv()
 logger = logging.getLogger(__name__)
 
 

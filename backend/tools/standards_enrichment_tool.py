@@ -16,9 +16,6 @@ from langchain_core.tools import tool
 from pydantic import BaseModel, Field
 
 import os
-from dotenv import load_dotenv
-
-load_dotenv()
 logger = logging.getLogger(__name__)
 
 

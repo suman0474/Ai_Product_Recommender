@@ -13,8 +13,6 @@ from langchain_core.exceptions import OutputParserException
 from pydantic import BaseModel, field_validator
 
 import os
-from dotenv import load_dotenv
-
 # Import existing infrastructure
 from agentic.vector_store import get_vector_store
 from llm_fallback import create_llm_with_fallback
@@ -27,8 +25,6 @@ from utils.json_utils import (
     ensure_string,
     ensure_float
 )
-
-load_dotenv()
 logger = logging.getLogger(__name__)
 
 

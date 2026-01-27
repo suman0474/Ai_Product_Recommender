@@ -4,14 +4,15 @@ Configuration management for backend services.
 Loads settings from environment variables (.env file) and provides
 centralized configuration access for Pinecone, LLM models, ChromaDB,
 and general application settings.
+
+PHASE 1 FIX: Removed load_dotenv() - environment loaded once in initialization.py
 """
 
-from dotenv import load_dotenv
 import os
 import logging
 
-# Load environment variables from .env file
-load_dotenv()
+# PHASE 1 FIX: load_dotenv() removed - initialized once in initialization.py
+# Environment variables are loaded before this module is imported
 
 logger = logging.getLogger(__name__)
 

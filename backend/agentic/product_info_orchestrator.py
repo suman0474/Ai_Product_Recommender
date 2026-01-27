@@ -138,11 +138,7 @@ def query_llm_fallback(query: str, session_id: str) -> Dict[str, Any]:
     """Use LLM directly for general questions."""
     try:
         from langchain_google_genai import ChatGoogleGenerativeAI
-        from dotenv import load_dotenv
-        import os
-        
-        load_dotenv()
-        
+                import os
         llm = ChatGoogleGenerativeAI(
             model="gemini-2.5-flash",
             google_api_key=os.getenv("GOOGLE_API_KEY"),

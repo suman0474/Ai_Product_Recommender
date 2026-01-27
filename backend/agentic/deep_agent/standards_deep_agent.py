@@ -33,15 +33,11 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import JsonOutputParser
 from docx import Document as DocxDocument
 
-from dotenv import load_dotenv
-
 from ..checkpointing import compile_with_checkpointing
 from ..vector_store import get_vector_store
 from llm_fallback import create_llm_with_fallback
 from ..llm_manager import get_cached_llm
 from prompts_library import load_prompt, load_prompt_sections
-
-load_dotenv()
 logger = logging.getLogger(__name__)
 
 
@@ -209,7 +205,22 @@ STANDARD_DOMAINS = {
 }
 
 # Mapping from domain type to actual .docx filename
-STANDARDS_DOCX_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "chroma_data", "Standards")
+# Use absolute path to handle both Docker (/app) and local environments
+_current_dir = os.path.dirname(os.path.abspath(__file__))  # .../backend/agentic/deep_agent/
+_base_dir = os.path.dirname(os.path.dirname(os.path.dirname(_current_dir)))  # Go up 3 levels to backend/
+_standards_candidate_1 = os.path.join(_base_dir, "chroma_data", "Standards")  # Project root structure
+_standards_candidate_2 = os.path.join(_base_dir, "backend", "chroma_data", "Standards")  # Local development structure
+
+# Use whichever path exists, fallback to candidate 1 (Docker/production)
+if os.path.isdir(_standards_candidate_2) and os.path.exists(os.path.join(_standards_candidate_2, "instrumentation_safety_standards.docx")):
+    STANDARDS_DOCX_DIR = _standards_candidate_2
+    _standards_path_msg = f"[INIT] Standards path (local dev): {STANDARDS_DOCX_DIR}"
+elif os.path.isdir(_standards_candidate_1) and os.path.exists(os.path.join(_standards_candidate_1, "instrumentation_safety_standards.docx")):
+    STANDARDS_DOCX_DIR = _standards_candidate_1
+    _standards_path_msg = f"[INIT] Standards path (docker/prod): {STANDARDS_DOCX_DIR}"
+else:
+    STANDARDS_DOCX_DIR = _standards_candidate_1  # Default to candidate 1
+    _standards_path_msg = f"[INIT] Standards path (default, may not exist): {STANDARDS_DOCX_DIR}"
 
 STANDARD_FILES = {
     "safety": "instrumentation_safety_standards.docx",
@@ -365,6 +376,7 @@ def load_standard_text(standard_type: str) -> Optional[str]:
 
     # Cache miss - load from disk
     logger.info(f"[DOC_CACHE] Cache MISS: Loading {standard_type}...")
+    logger.info(f"[DOC_CACHE] Using STANDARDS_DOCX_DIR: {STANDARDS_DOCX_DIR}")
     start_time = time.time()
 
     try:
@@ -1664,17 +1676,15 @@ def run_standards_deep_agent_batch(
         items_needing_more = []
         for i, enriched_item in enumerate(enriched_items):
             combined_specs = enriched_item.get("combined_specifications", {})
-            standards_specs = enriched_item.get("standards_specifications", {})
-            all_item_specs = {**combined_specs, **standards_specs}
-
-            spec_count = _count_valid_specs(all_item_specs)
+            # Use only combined_specs for counting (consistent with final count logic)
+            spec_count = _count_valid_specs(combined_specs)
             if spec_count < MIN_STANDARDS_SPECS_COUNT:
                 items_needing_more.append({
                     "index": i,
                     "name": enriched_item.get("name", f"Item {i+1}"),
                     "current_count": spec_count,
                     "needed": MIN_STANDARDS_SPECS_COUNT - spec_count,
-                    "existing_specs": all_item_specs
+                    "existing_specs": combined_specs  # Use combined_specs consistently
                 })
 
         if items_needing_more:
