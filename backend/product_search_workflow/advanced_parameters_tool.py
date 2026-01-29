@@ -18,6 +18,23 @@ from typing import Dict, Any, List, Optional
 # Configure logging
 logger = logging.getLogger(__name__)
 
+# Debug flags for advanced parameters debugging
+try:
+    from debug_flags import debug_log, timed_execution, is_debug_enabled
+    DEBUG_AVAILABLE = True
+except ImportError:
+    DEBUG_AVAILABLE = False
+    def debug_log(module, **kwargs):
+        def decorator(func):
+            return func
+        return decorator
+    def timed_execution(module, **kwargs):
+        def decorator(func):
+            return func
+        return decorator
+    def is_debug_enabled(module):
+        return False
+
 
 class AdvancedParametersTool:
     """
@@ -39,6 +56,8 @@ class AdvancedParametersTool:
         """Initialize the advanced parameters discovery tool."""
         logger.info("[AdvancedParametersTool] Initialized")
 
+    @timed_execution("ADVANCED_PARAMS", threshold_ms=15000)
+    @debug_log("ADVANCED_PARAMS", log_args=True, log_result=False)
     def discover(
         self,
         product_type: str,

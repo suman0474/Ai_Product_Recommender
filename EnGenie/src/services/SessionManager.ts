@@ -12,6 +12,14 @@
 import { v4 as uuidv4 } from 'uuid';
 import { SessionOrchestrationService, sessionOrchestrationService } from './SessionOrchestrationService';
 
+// Workflow type aligned with backend WorkflowTarget enum
+export type WorkflowType =
+  | 'engenie_chat'           // WorkflowTarget.ENGENIE_CHAT
+  | 'solution'               // WorkflowTarget.SOLUTION_WORKFLOW  
+  | 'instrument_identifier'  // WorkflowTarget.INSTRUMENT_IDENTIFIER
+  | 'out_of_domain'          // WorkflowTarget.OUT_OF_DOMAIN
+  | null;
+
 export interface SubThread {
   subThreadId: string;
   workflowType: 'instrument_identifier' | 'solution' | 'product_search' | 'grounded_chat';
@@ -30,6 +38,9 @@ export interface UserSession {
   subThreads: Map<string, SubThread>; // Map of subThreadId -> SubThread
   activeSubThreadId?: string; // Currently active sub-thread
   windowCount: number;
+  // Workflow state management
+  currentWorkflow: WorkflowType;
+  workflowLockedAt?: string;
 }
 
 export interface SessionMetadata {
@@ -55,9 +66,22 @@ export class SessionManager {
   private orchestrationService: SessionOrchestrationService;
   private sessionCreationPromise: Promise<UserSession> | null = null; // Track in-flight creation
 
+  // Workflow TTL (10 minutes)
+  private readonly WORKFLOW_TTL_MS = 10 * 60 * 1000;
+
   private constructor() {
     this.orchestrationService = sessionOrchestrationService;
     this.loadSessionsFromStorage();
+
+    // Cross-tab synchronization
+    if (typeof window !== 'undefined') {
+      window.addEventListener('storage', (e: StorageEvent) => {
+        if (e.key === this.sessionStorageKey) {
+          console.log('[SESSION] Cross-tab sync detected, reloading sessions...');
+          this.loadSessionsFromStorage();
+        }
+      });
+    }
   }
 
   public static getInstance(): SessionManager {
@@ -139,6 +163,7 @@ export class SessionManager {
       lastActivityTime: new Date().toISOString(),
       subThreads: new Map(),
       windowCount: 1,
+      currentWorkflow: null,
     };
 
     this.sessions.set(sessionId, session);
@@ -179,6 +204,7 @@ export class SessionManager {
       lastActivityTime: new Date().toISOString(),
       subThreads: new Map(),
       windowCount: 1,
+      currentWorkflow: null,
     };
 
     this.sessions.set(sessionId, session);
@@ -234,6 +260,68 @@ export class SessionManager {
   public getMainThreadId(): string | null {
     const session = this.getCurrentSession();
     return session?.mainThreadId || null;
+  }
+
+  // ========================================================================
+  // WORKFLOW STATE MANAGEMENT (NEW)
+  // ========================================================================
+
+  /**
+   * SET WORKFLOW - Store current workflow with TTL
+   */
+  public setWorkflow(workflow: WorkflowType): void {
+    const session = this.getCurrentSession();
+    if (!session) {
+      console.warn('[SESSION] Cannot set workflow - no active session');
+      return;
+    }
+    session.currentWorkflow = workflow;
+    session.workflowLockedAt = workflow ? new Date().toISOString() : undefined;
+    this.persistSessionsToStorage();
+    console.log(`[SESSION] Workflow set: ${workflow}`);
+  }
+
+  /**
+   * GET WORKFLOW - Returns current workflow (null if expired)
+   */
+  public getWorkflow(): WorkflowType {
+    const session = this.getCurrentSession();
+    if (!session?.currentWorkflow) return null;
+
+    // TTL expiration check
+    if (session.workflowLockedAt) {
+      const elapsed = Date.now() - new Date(session.workflowLockedAt).getTime();
+      if (elapsed > this.WORKFLOW_TTL_MS) {
+        console.log('[SESSION] Workflow TTL expired, clearing...');
+        this.clearWorkflow();
+        return null;
+      }
+    }
+    return session.currentWorkflow;
+  }
+
+  /**
+   * CLEAR WORKFLOW - Remove workflow lock
+   */
+  public clearWorkflow(): void {
+    const session = this.getCurrentSession();
+    if (session) {
+      session.currentWorkflow = null;
+      session.workflowLockedAt = undefined;
+      this.persistSessionsToStorage();
+      console.log('[SESSION] Workflow cleared');
+    }
+  }
+
+  /**
+   * REFRESH WORKFLOW TTL - Extend expiration on activity
+   */
+  public refreshWorkflowTTL(): void {
+    const session = this.getCurrentSession();
+    if (session?.currentWorkflow) {
+      session.workflowLockedAt = new Date().toISOString();
+      this.persistSessionsToStorage();
+    }
   }
 
   /**
@@ -631,6 +719,8 @@ export class SessionManager {
         lastActivityTime: session.lastActivityTime,
         windowCount: session.windowCount,
         activeSubThreadId: session.activeSubThreadId,
+        currentWorkflow: session.currentWorkflow,
+        workflowLockedAt: session.workflowLockedAt,
         subThreads: Array.from(session.subThreads.entries()).map(([subKey, subThread]) => ({
           key: subKey,
           subThreadId: subThread.subThreadId,
@@ -672,6 +762,8 @@ export class SessionManager {
           lastActivityTime: sessionData.lastActivityTime,
           windowCount: sessionData.windowCount,
           activeSubThreadId: sessionData.activeSubThreadId,
+          currentWorkflow: sessionData.currentWorkflow || null,
+          workflowLockedAt: sessionData.workflowLockedAt,
           subThreads: new Map(
             sessionData.subThreads.map((subData: any) => [
               subData.key,

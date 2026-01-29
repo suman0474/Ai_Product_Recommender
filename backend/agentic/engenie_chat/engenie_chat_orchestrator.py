@@ -17,6 +17,24 @@ from .engenie_chat_memory import (
     resolve_follow_up, set_context, get_context
 )
 
+# Import new utility modules
+try:
+    from ..circuit_breaker import get_circuit_breaker, CircuitOpenError
+    from ..rag_cache import get_rag_cache, cache_get, cache_set
+    from ..rate_limiter import get_rate_limiter, acquire_for_service
+    from ..fast_fail import should_fail_fast, check_and_set_fast_fail
+    from ..rag_logger import set_trace_id, get_trace_id, OrchestratorLogger
+    UTILITIES_AVAILABLE = True
+except ImportError as e:
+    UTILITIES_AVAILABLE = False
+
+# Import AgenticConfig for timeouts
+try:
+    from config.agentic_config import AgenticConfig
+    ORCHESTRATOR_TIMEOUT = AgenticConfig.ORCHESTRATOR_TIMEOUT_SECONDS
+except ImportError:
+    ORCHESTRATOR_TIMEOUT = 1200  # Default 20 minutes
+
 logger = logging.getLogger(__name__)
 
 # Thread pool for parallel execution
@@ -212,7 +230,8 @@ def query_sources_parallel(
     from concurrent.futures import TimeoutError as FuturesTimeoutError
     
     try:
-        for future in as_completed(futures, timeout=120):  # Increased timeout for LLM retries
+        # Use configurable timeout (default 20 minutes = 1200 seconds)
+        for future in as_completed(futures, timeout=ORCHESTRATOR_TIMEOUT):
             source = futures[future]
             try:
                 result = future.result()
@@ -226,7 +245,8 @@ def query_sources_parallel(
                 }
     except FuturesTimeoutError:
         # Handle timeout gracefully - add error results for unfinished futures
-        logger.warning(f"[ORCHESTRATOR] Timeout waiting for sources, using partial results")
+        timeout_mins = ORCHESTRATOR_TIMEOUT // 60
+        logger.warning(f"[ORCHESTRATOR] Timeout ({timeout_mins} min) waiting for sources, using partial results")
         for future, source in futures.items():
             if source.value not in results:
                 if future.done():
@@ -243,7 +263,7 @@ def query_sources_parallel(
                     results[source.value] = {
                         "success": False,
                         "source": source.value,
-                        "error": "Query timed out after 120 seconds"
+                        "error": f"Query timed out after {ORCHESTRATOR_TIMEOUT} seconds ({timeout_mins} min)"
                     }
                     future.cancel()
     
@@ -483,3 +503,123 @@ def run_engenie_chat_query(
     merged["llm_fallback_used"] = needs_llm_fallback
 
     return merged
+
+
+# =============================================================================
+# BACKWARD COMPATIBILITY ALIAS
+# =============================================================================
+
+def run_product_info_query(user_input: str, session_id: str) -> Dict[str, Any]:
+    """
+    Backward compatibility alias for run_engenie_chat_query.
+    
+    This function exists to maintain compatibility with code that imports
+    run_product_info_query. It simply delegates to run_engenie_chat_query.
+    
+    Args:
+        user_input: User's question or query
+        session_id: Session identifier for conversation tracking
+    
+    Returns:
+        Response dict with answer and metadata
+    """
+    return run_engenie_chat_query(user_input=user_input, session_id=session_id)
+
+
+# =============================================================================
+# WORKFLOW REGISTRATION (Level 4.5 + Level 5)
+# =============================================================================
+
+def _register_workflow():
+    """Register this workflow with the central registry."""
+    try:
+        from ..workflow_registry import get_workflow_registry, WorkflowMetadata
+        
+        registry = get_workflow_registry()
+        
+        # Register as "product_info" (primary, higher priority)
+        registry.register(WorkflowMetadata(
+            name="product_info",
+            display_name="Product Info / EnGenie Chat",
+            description="Handles questions about products, standards, vendors, and general industrial automation knowledge. Routes to appropriate RAG sources: Index RAG, Standards RAG, Strategy RAG, Deep Agent, or LLM fallback.",
+            keywords=[
+                "question", "what is", "tell me", "explain", "compare", "difference",
+                "standard", "certification", "vendor", "supplier", "specification",
+                "how does", "why", "when", "which", "datasheet", "model",
+                "help", "information", "about"
+            ],
+            intents=[
+                "question", "productinfo", "product_info", "greeting", "confirm", "reject",
+                "standards", "vendor_strategy", "grounded_chat", "comparison", "chitchat"
+            ],
+            capabilities=[
+                "rag_routing",
+                "hybrid_sources",
+                "follow_up_detection",
+                "memory_context",
+                "parallel_query",
+                "llm_fallback",
+                "streaming"
+            ],
+            entry_function=run_engenie_chat_query,  # Use EnGenie Chat implementation
+            priority=50,  # Primary workflow - default fallback
+            tags=["core", "knowledge", "rag", "chat"],
+            min_confidence_threshold=0.4
+        ))
+        logger.info("[EnGenieChatOrchestrator] Registered as 'product_info' (primary)")
+        
+        # Also register as "engenie_chat" (secondary, lower priority)
+        registry.register(WorkflowMetadata(
+            name="engenie_chat",
+            display_name="EnGenie Chat",
+            description="Conversational knowledge assistant for product information, standards, and vendor strategies. Routes to appropriate RAG sources and handles follow-up conversations with memory.",
+            keywords=[
+                "question", "what is", "tell me", "explain", "compare", "difference",
+                "standard", "certification", "vendor", "supplier", "specification",
+                "how does", "why", "when", "which", "datasheet", "model",
+                "help", "information", "about", "chat", "conversational"
+            ],
+            intents=[
+                "question", "greeting", "chitchat", "confirm", "reject",
+                "standards", "vendor_strategy", "grounded_chat", "comparison"
+            ],
+            capabilities=[
+                "rag_routing",
+                "hybrid_sources",
+                "follow_up_detection",
+                "conversation_memory",
+                "parallel_query",
+                "llm_fallback",
+                "streaming"
+            ],
+            entry_function=run_engenie_chat_query,
+            priority=40,  # Alternative to product_info for conversational queries
+            tags=["core", "knowledge", "rag", "chat", "conversational"],
+            min_confidence_threshold=0.35  # More flexible
+        ))
+        logger.info("[EnGenieChatOrchestrator] Registered as 'engenie_chat' (alternative)")
+        
+    except ImportError as e:
+        logger.debug(f"[EnGenieChatOrchestrator] Registry not available: {e}")
+    except Exception as e:
+        logger.warning(f"[EnGenieChatOrchestrator] Failed to register: {e}")
+
+# Register on module load
+_register_workflow()
+
+
+# =============================================================================
+# EXPORTS
+# =============================================================================
+
+__all__ = [
+    'run_engenie_chat_query',
+    'run_product_info_query',  # Backward compatibility alias
+    'query_index_rag',
+    'query_standards_rag',
+    'query_strategy_rag',
+    'query_deep_agent',
+    'query_llm_fallback',
+    'query_sources_parallel',
+    'merge_results'
+]

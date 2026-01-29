@@ -49,6 +49,23 @@ from typing import Dict, Any, Optional, List, Union
 # Configure logging
 logger = logging.getLogger(__name__)
 
+# Debug flags for ranking tool debugging
+try:
+    from debug_flags import debug_log, timed_execution, is_debug_enabled
+    DEBUG_AVAILABLE = True
+except ImportError:
+    DEBUG_AVAILABLE = False
+    def debug_log(module, **kwargs):
+        def decorator(func):
+            return func
+        return decorator
+    def timed_execution(module, **kwargs):
+        def decorator(func):
+            return func
+        return decorator
+    def is_debug_enabled(module):
+        return False
+
 
 class RankingTool:
     """
@@ -80,6 +97,8 @@ class RankingTool:
         self.use_llm_ranking = use_llm_ranking
         logger.info("[RankingTool] Initialized (LLM ranking: %s)", use_llm_ranking)
 
+    @timed_execution("RANKING_TOOL", threshold_ms=20000)
+    @debug_log("RANKING_TOOL", log_args=True, log_result=False)
     def rank(
         self,
         vendor_analysis: Dict[str, Any],

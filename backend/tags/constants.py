@@ -59,8 +59,8 @@ PRODUCT_SEARCH_KEYWORDS: List[str] = [
     "specific product", "particular model"
 ]
 
-# Keywords indicating PRODUCT_INFO intent
-PRODUCT_INFO_KEYWORDS: List[str] = [
+# Keywords indicating ENGENIE_CHAT intent
+ENGENIE_CHAT_KEYWORDS: List[str] = [
     # Information requests
     "what is", "what are", "what's", "whats",
     "temperature rating", "temperature rating of",
@@ -69,7 +69,7 @@ PRODUCT_INFO_KEYWORDS: List[str] = [
     "information on", "info on", "tell me about",
     "describe", "explain about",
 
-    # Specific models (strong signal for product_info)
+    # Specific models (strong signal for ENGENIE_CHAT)
     "ST800", "ST700", "ST3000", "STG", "STD",
     "3051", "3051S", "3051CD", "3051L",
     "SMV", "SMV800", "SMV3000",
@@ -263,7 +263,7 @@ WORKFLOW_TO_INTENT_MAP: dict = {
     "instrument_detail": "solution",
     "comparison": "product_search",
     "product_search": "product_search",
-    "grounded_chat": "chat",  # Default, may be product_info
+    "grounded_chat": "chat",  # Default, may be ENGENIE_CHAT
 
     # Traditional workflows
     "procurement": "product_search",

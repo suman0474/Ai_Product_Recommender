@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
-import { Send, Loader2, Play, Bot, LogOut, User, Upload, Save, FolderOpen, FileText, X, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Send, Loader2, Play, Bot, LogOut, User, Upload, Save, FolderOpen, FileText, X, ChevronLeft, ChevronRight, RefreshCw } from 'lucide-react';
 import { useToast } from '@/components/ui/use-toast';
 import { BASE_URL } from '../components/AIRecommender/api';
 import { routeUserInputByIntent, validateRequirements } from '@/components/AIRecommender/api';
@@ -256,6 +256,84 @@ const Project = () => {
             actionButtons
         };
         setChatMessages(prev => [...prev, newMessage]);
+    };
+
+    // Helper to parse specification values (handles both string and structured formats)
+    const parseSpecValue = (value: any): { displayValue: string; source: string | null; confidence: number | null } => {
+        // Handle structured Deep Agent format: { value: "...", source: "...", confidence: 0.9 }
+        if (value && typeof value === 'object' && !Array.isArray(value) && 'value' in value) {
+            return {
+                displayValue: value.value || 'Not specified',
+                source: value.source || null,
+                confidence: value.confidence || null
+            };
+        }
+        // Handle simple string/number values
+        return {
+            displayValue: value || 'Not specified',
+            source: null,
+            confidence: null
+        };
+    };
+
+    // Helper to get source label for display
+    const getSourceLabel = (source: string | null): string | null => {
+        if (!source) return null;
+        if (source.toLowerCase().includes('standard')) return 'Standards';
+        if (source.toLowerCase().includes('infer')) return 'Inferred';
+        if (source.toLowerCase().includes('rag')) return 'Knowledge Base';
+        if (source.toLowerCase().includes('user')) return 'User Input';
+        return source;
+    };
+
+
+
+    // State to track failed image fetches for regeneration
+    const [failedImages, setFailedImages] = useState<Set<string>>(new Set());
+    const [regeneratingImages, setRegeneratingImages] = useState<Set<string>>(new Set());
+
+    // Regenerate a single image - called when user clicks retry button
+    const regenerateImage = async (productName: string) => {
+        if (regeneratingImages.has(productName)) return; // Already regenerating
+
+        setRegeneratingImages(prev => new Set(prev).add(productName));
+
+        try {
+            const response = await fetch(`${BASE_URL}/api/generic_image/regenerate/${encodeURIComponent(productName)}`, {
+                method: 'POST',
+                credentials: 'include'
+            });
+
+            const data = await response.json();
+
+            if (response.ok && data.success && data.image?.url) {
+                // Successfully regenerated
+                setGenericImages(prev => ({
+                    ...prev,
+                    [productName]: data.image.url
+                }));
+                // Remove from failed set
+                setFailedImages(prev => {
+                    const next = new Set(prev);
+                    next.delete(productName);
+                    return next;
+                });
+            } else if (response.status === 429) {
+                // Rate limited - show wait time
+                const waitSeconds = data.wait_seconds || 30;
+                console.warn(`Rate limited. Please wait ${waitSeconds} seconds before retrying.`);
+            } else {
+                console.error('Image regeneration failed:', data.error || 'Unknown error');
+            }
+        } catch (error) {
+            console.error('Error regenerating image:', error);
+        } finally {
+            setRegeneratingImages(prev => {
+                const next = new Set(prev);
+                next.delete(productName);
+                return next;
+            });
+        }
     };
 
     // NEW: For file upload
@@ -2465,7 +2543,7 @@ const Project = () => {
                                                                 </div>
 
                                                                 {/* Generic Product Type Image */}
-                                                                {genericImages[instrument.productName] && (
+                                                                {genericImages[instrument.productName] ? (
                                                                     <div className="flex justify-center my-4 rounded-lg overflow-hidden">
                                                                         <img
                                                                             src={genericImages[instrument.productName]}
@@ -2473,8 +2551,33 @@ const Project = () => {
                                                                             className="w-48 h-48 object-contain rounded-lg mix-blend-multiply"
                                                                             onError={(e) => {
                                                                                 e.currentTarget.style.display = 'none';
+                                                                                // Mark as failed if image fails to load
+                                                                                setFailedImages(prev => new Set(prev).add(instrument.productName));
                                                                             }}
                                                                         />
+                                                                    </div>
+                                                                ) : failedImages.has(instrument.productName) && (
+                                                                    <div className="flex flex-col items-center justify-center my-4 py-6 rounded-lg bg-muted/30 border border-dashed border-muted-foreground/30">
+                                                                        <p className="text-sm text-muted-foreground mb-2">Image not available</p>
+                                                                        <Button
+                                                                            variant="outline"
+                                                                            size="sm"
+                                                                            disabled={regeneratingImages.has(instrument.productName)}
+                                                                            onClick={() => regenerateImage(instrument.productName)}
+                                                                            className="text-xs"
+                                                                        >
+                                                                            {regeneratingImages.has(instrument.productName) ? (
+                                                                                <>
+                                                                                    <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                                                                                    Generating...
+                                                                                </>
+                                                                            ) : (
+                                                                                <>
+                                                                                    <RefreshCw className="h-3 w-3 mr-1" />
+                                                                                    Generate Image
+                                                                                </>
+                                                                            )}
+                                                                        </Button>
                                                                     </div>
                                                                 )}
 
@@ -2487,6 +2590,10 @@ const Project = () => {
                                                                         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                                                                             {Object.entries(instrument.specifications).map(([key, value]) => {
                                                                                 const prettyKey = prettifyKey(key);
+                                                                                // Parse the specification value to extract display value and source
+                                                                                const { displayValue, source, confidence } = parseSpecValue(value);
+                                                                                const sourceLabel = getSourceLabel(source);
+
                                                                                 // Check for description in fieldDescriptions (try multiple key formats)
                                                                                 const description =
                                                                                     fieldDescriptions[key] ||
@@ -2511,7 +2618,17 @@ const Project = () => {
                                                                                         ) : (
                                                                                             <span className="font-medium">{prettyKey}:</span>
                                                                                         )}{' '}
-                                                                                        <span className="text-muted-foreground">{value}</span>
+                                                                                        <span className="text-muted-foreground">{displayValue}</span>
+                                                                                        {sourceLabel && (
+                                                                                            <span className="ml-2 text-xs px-1.5 py-0.5 rounded bg-primary/10 text-primary border border-primary/20">
+                                                                                                {sourceLabel}
+                                                                                            </span>
+                                                                                        )}
+                                                                                        {confidence && confidence < 0.7 && (
+                                                                                            <span className="ml-1 text-xs text-amber-600" title={`Confidence: ${Math.round(confidence * 100)}%`}>
+                                                                                                ⚠️
+                                                                                            </span>
+                                                                                        )}
                                                                                     </div>
                                                                                 );
                                                                             })}
@@ -2576,7 +2693,7 @@ const Project = () => {
                                                                 </div>
 
                                                                 {/* Generic Product Type Image */}
-                                                                {genericImages[accessory.accessoryName] && (
+                                                                {genericImages[accessory.accessoryName] ? (
                                                                     <div className="flex justify-center my-4 rounded-lg overflow-hidden">
                                                                         <img
                                                                             src={genericImages[accessory.accessoryName]}
@@ -2584,8 +2701,33 @@ const Project = () => {
                                                                             className="w-48 h-48 object-contain rounded-lg mix-blend-multiply"
                                                                             onError={(e) => {
                                                                                 e.currentTarget.style.display = 'none';
+                                                                                // Mark as failed if image fails to load
+                                                                                setFailedImages(prev => new Set(prev).add(accessory.accessoryName));
                                                                             }}
                                                                         />
+                                                                    </div>
+                                                                ) : failedImages.has(accessory.accessoryName) && (
+                                                                    <div className="flex flex-col items-center justify-center my-4 py-6 rounded-lg bg-muted/30 border border-dashed border-muted-foreground/30">
+                                                                        <p className="text-sm text-muted-foreground mb-2">Image not available</p>
+                                                                        <Button
+                                                                            variant="outline"
+                                                                            size="sm"
+                                                                            disabled={regeneratingImages.has(accessory.accessoryName)}
+                                                                            onClick={() => regenerateImage(accessory.accessoryName)}
+                                                                            className="text-xs"
+                                                                        >
+                                                                            {regeneratingImages.has(accessory.accessoryName) ? (
+                                                                                <>
+                                                                                    <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                                                                                    Generating...
+                                                                                </>
+                                                                            ) : (
+                                                                                <>
+                                                                                    <RefreshCw className="h-3 w-3 mr-1" />
+                                                                                    Generate Image
+                                                                                </>
+                                                                            )}
+                                                                        </Button>
                                                                     </div>
                                                                 )}
 
@@ -2598,6 +2740,10 @@ const Project = () => {
                                                                         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                                                                             {Object.entries(accessory.specifications).map(([key, value]) => {
                                                                                 const prettyKey = prettifyKey(key);
+                                                                                // Parse the specification value to extract display value and source
+                                                                                const { displayValue, source, confidence } = parseSpecValue(value);
+                                                                                const sourceLabel = getSourceLabel(source);
+
                                                                                 // Check for description in fieldDescriptions
                                                                                 const description =
                                                                                     fieldDescriptions[key] ||
@@ -2622,7 +2768,17 @@ const Project = () => {
                                                                                         ) : (
                                                                                             <span className="font-medium">{prettyKey}:</span>
                                                                                         )}{' '}
-                                                                                        <span className="text-muted-foreground">{value}</span>
+                                                                                        <span className="text-muted-foreground">{displayValue}</span>
+                                                                                        {sourceLabel && (
+                                                                                            <span className="ml-2 text-xs px-1.5 py-0.5 rounded bg-primary/10 text-primary border border-primary/20">
+                                                                                                {sourceLabel}
+                                                                                            </span>
+                                                                                        )}
+                                                                                        {confidence && confidence < 0.7 && (
+                                                                                            <span className="ml-1 text-xs text-amber-600" title={`Confidence: ${Math.round(confidence * 100)}%`}>
+                                                                                                ⚠️
+                                                                                            </span>
+                                                                                        )}
                                                                                     </div>
                                                                                 );
                                                                             })}

@@ -1190,6 +1190,53 @@ def run_solution_workflow_stream(
 
 
 # =============================================================================
+# WORKFLOW REGISTRATION (Level 4.5)
+# =============================================================================
+
+def _register_workflow():
+    """Register this workflow with the central registry."""
+    try:
+        from .workflow_registry import get_workflow_registry, WorkflowMetadata, RetryPolicy, RetryStrategy
+        
+        get_workflow_registry().register(WorkflowMetadata(
+            name="solution",
+            display_name="Solution Workflow",
+            description="Handles complex multi-instrument systems requiring 3+ instruments working together as a complete measurement system. Includes solution analysis, parallel instrument/accessory identification, and standards RAG enrichment.",
+            keywords=[
+                "system", "design", "complete", "profiling", "package", "comprehensive",
+                "multiple instruments", "reactor", "distillation", "heating circuit",
+                "safety system", "pump system", "skid", "plant instrumentation",
+                "crude oil", "refinery", "chemical plant", "process control"
+            ],
+            intents=["solution", "system", "systems", "complex_system", "design"],
+            capabilities=[
+                "multi_instrument",
+                "parallel_identification", 
+                "standards_enrichment",
+                "solution_analysis",
+                "accessory_matching"
+            ],
+            entry_function=run_solution_workflow,
+            priority=100,  # Highest priority for complex systems
+            tags=["core", "complex", "engineering"],
+            retry_policy=RetryPolicy(
+                strategy=RetryStrategy.EXPONENTIAL_BACKOFF,
+                max_retries=3,
+                base_delay_ms=1000
+            ),
+            min_confidence_threshold=0.6
+        ))
+        logger.info("[SolutionWorkflow] Registered with WorkflowRegistry")
+    except ImportError as e:
+        logger.debug(f"[SolutionWorkflow] Registry not available: {e}")
+    except Exception as e:
+        logger.warning(f"[SolutionWorkflow] Failed to register: {e}")
+
+# Register on module load
+_register_workflow()
+
+
+# =============================================================================
 # EXPORTS
 # =============================================================================
 

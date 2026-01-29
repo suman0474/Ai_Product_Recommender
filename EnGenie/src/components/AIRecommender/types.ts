@@ -136,6 +136,7 @@ export interface IntentClassificationResult {
   suggestWorkflow?: WorkflowSuggestion;  // Suggestion for UI to display as clickable option
   workflowLocked?: boolean;  // True if user is locked in a workflow
   currentWorkflow?: string;  // Current workflow the user is in
+  retryable?: boolean;  // True if error is retryable (network/server error)
 }
 
 /**

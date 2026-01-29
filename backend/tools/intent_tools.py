@@ -132,59 +132,136 @@ def _classify_rule_based(user_input: str) -> Optional[Dict[str, Any]]:
             "solution_indicators": []
         }
 
-    # Product requests - need to distinguish complex systems from simple requests (PHASE 2 FIX)
+    # Product requests - need to distinguish complex systems from simple requests (PHASE 3 FIX)
     if any(query.startswith(p) for p in _PRODUCT_REQUEST_STARTERS):
-        # Detect complex system indicators
-        complex_indicators = [
-            'system', 'complete', 'profiling', 'multiple', 'design a',
-            'comprehensive', 'circuit', 'package', 'skid', 'plant',
-            'solution', 'full', 'integrated', 'platform', 'architecture',
-            'end-to-end', 'complete solution', 'total solution'
+        # PHASE 3 FIX: Knowledge question indicators - these override solution detection
+        # If query is asking ABOUT systems (knowledge), not building them
+        knowledge_indicators = [
+            'what is', 'what are', 'how does', 'how do', 'explain',
+            'tell me about', 'describe', 'difference between', 'compare',
+            'meaning of', 'definition of', 'what\'s the', 'can you explain'
         ]
-
-        # Count how many complex indicators are present
-        matched_indicators = [ind for ind in complex_indicators if ind in query]
-        indicator_count = len(matched_indicators)
-        is_complex = indicator_count >= 2
-
-        # PHASE 2 FIX: Also check for explicit solution phrases
-        solution_phrases = [
-            'i\'m designing', 'i\'m building', 'i need a complete',
-            'i need a system', 'planning a', 'creating a solution',
-            'designing a', 'building a', 'implementing a solution'
+        is_knowledge_query = any(kw in query for kw in knowledge_indicators)
+        
+        # PHASE 3 FIX: Stricter solution phrases - require ACTION verbs for building/designing
+        # These must indicate the user is BUILDING something, not asking about it
+        solution_action_phrases = [
+            'i\'m designing', 'i\'m building', 'i\'m implementing',
+            'i\'m creating', 'i\'m planning', 'i\'m developing',
+            'design a system', 'build a system', 'create a system',
+            'implement a solution', 'develop a solution',
+            'need to design', 'need to build', 'need to implement',
+            'planning to build', 'planning to design', 'planning to create'
         ]
-        is_solution_phrase = any(phrase in query for phrase in solution_phrases)
-
-        # Determine intent and is_solution flag (PHASE 2 FIX)
-        if is_complex or is_solution_phrase:
+        is_solution_action = any(phrase in query for phrase in solution_action_phrases)
+        
+        # PHASE 3 FIX: Complex system phrases (multi-instrument requirement)
+        complex_system_phrases = [
+            'multiple instruments', 'multiple transmitters', 'multiple sensors',
+            'instrumentation package', 'full instrumentation', 'complete instrumentation',
+            'monitoring system for', 'control system for', 'measurement system for',
+            'plant instrumentation', 'process instrumentation', 'skid package'
+        ]
+        is_complex_system = any(phrase in query for phrase in complex_system_phrases)
+        
+        # PHASE 3 FIX: Semantic validation - use engenie_chat classifier
+        # ONLY used to detect knowledge queries that should NOT go to solution
+        # NOT used to override simple requirements to question
+        is_rag_knowledge_query = False
+        if is_knowledge_query:
+            # Already a knowledge query based on keywords
+            is_rag_knowledge_query = True
+        elif is_solution_action or is_complex_system:
+            # User wants to BUILD something, but might actually be asking about it
+            # Use semantic classifier to double-check
+            try:
+                from agentic.engenie_chat.engenie_chat_intent_agent import classify_query, DataSource
+                data_source, confidence, _ = classify_query(query, use_semantic_llm=False)
+                # Standards and Strategy RAG indicate knowledge/info queries
+                rag_knowledge_sources = {DataSource.STANDARDS_RAG, DataSource.STRATEGY_RAG}
+                if data_source in rag_knowledge_sources and confidence >= 0.8:
+                    is_rag_knowledge_query = True
+                    logger.info(f"[INTENT_RULE] Semantic check: Knowledge RAG detected ({data_source.value}, conf={confidence:.2f})")
+            except ImportError:
+                logger.debug("[INTENT_RULE] Semantic classifier not available, using rule-based only")
+            except Exception as e:
+                logger.debug(f"[INTENT_RULE] Semantic check failed: {e}")
+        
+        # PHASE 3 FIX: Decision logic with semantic awareness
+        # 1. Knowledge queries → EnGenie Chat (question)
+        if is_knowledge_query or is_rag_knowledge_query:
+            logger.info(f"[INTENT_RULE] Knowledge query detected: '{query[:50]}' (knowledge={is_knowledge_query}, rag_knowledge={is_rag_knowledge_query})")
+            return {
+                "success": True,
+                "intent": "question",
+                "confidence": 0.9,
+                "next_step": None,
+                "extracted_info": {
+                    "rule_based": True,
+                    "is_knowledge_query": is_knowledge_query,
+                    "is_rag_knowledge_query": is_rag_knowledge_query
+                },
+                "is_solution": False,
+                "solution_indicators": []
+            }
+        
+        # Solution action phrase OR complex system → Solution workflow
+        if is_solution_action or is_complex_system:
+            matched_indicators = []
+            if is_solution_action:
+                matched_indicators.append("solution_action_phrase")
+            if is_complex_system:
+                matched_indicators.append("complex_system_phrase")
+            
             logger.info(
-                f"[INTENT_RULE] Complex/solution request detected: '{query[:50]}' "
-                f"(indicators={indicator_count}, solution_phrase={is_solution_phrase})"
+                f"[INTENT_RULE] Solution request detected: '{query[:50]}' "
+                f"(action={is_solution_action}, complex={is_complex_system})"
             )
             return {
                 "success": True,
-                "intent": "solution",  # PHASE 2 FIX: Changed from "question" to "solution"
+                "intent": "solution",
                 "confidence": 0.85,
                 "next_step": None,
                 "extracted_info": {
                     "rule_based": True,
-                    "complex_indicators": matched_indicators,
-                    "indicator_count": indicator_count
+                    "is_solution_action": is_solution_action,
+                    "is_complex_system": is_complex_system
                 },
-                "is_solution": True,  # PHASE 2 FIX: NOW SET TO TRUE
+                "is_solution": True,
                 "solution_indicators": matched_indicators
             }
-        else:
-            logger.info(f"[INTENT_RULE] Simple product request detected: '{query[:50]}'")
-            return {
-                "success": True,
-                "intent": "requirements",  # PHASE 2 FIX: Changed from "question" to "requirements"
-                "confidence": 0.9,
-                "next_step": None,
-                "extracted_info": {"rule_based": True},
-                "is_solution": False,
-                "solution_indicators": []
-            }
+        
+        # Default: Simple product request → Instrument Identifier
+        logger.info(f"[INTENT_RULE] Simple product request detected: '{query[:50]}'")
+        return {
+            "success": True,
+            "intent": "requirements",
+            "confidence": 0.9,
+            "next_step": None,
+            "extracted_info": {"rule_based": True},
+            "is_solution": False,
+            "solution_indicators": []
+        }
+
+    # PHASE 3 FIX: Solution design phrases that don't start with product request starters
+    # These are explicit "I'm building/designing" statements
+    solution_design_starters = [
+        "i'm designing", "i'm building", "i'm implementing",
+        "i'm creating", "i'm planning", "i'm developing",
+        "we're designing", "we're building", "we're implementing",
+        "we are designing", "we are building", "we are implementing"
+    ]
+    if any(query.startswith(s) for s in solution_design_starters):
+        logger.info(f"[INTENT_RULE] Solution design phrase detected: '{query[:50]}'")
+        return {
+            "success": True,
+            "intent": "solution",
+            "confidence": 0.9,
+            "next_step": None,
+            "extracted_info": {"rule_based": True, "is_design_statement": True},
+            "is_solution": True,
+            "solution_indicators": ["design_statement"]
+        }
 
     # No rule matched - need LLM
     return None

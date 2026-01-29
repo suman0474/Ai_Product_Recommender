@@ -292,20 +292,25 @@ class LLMWithTimeout(Runnable):
     Uses threading for cross-platform compatibility (Windows-safe).
 
     Properly implements LangChain Runnable interface for chain compatibility.
+
+    DEFAULT TIMEOUT: 600 seconds (10 minutes) for production stability.
+    This prevents timeout errors during heavy LLM processing while still
+    providing protection against hung connections.
     """
 
     # Use PrivateAttr for non-serializable fields (Pydantic v2 compatible)
     _base_llm: Any = PrivateAttr()
-    _timeout_seconds: int = PrivateAttr(default=60)
+    _timeout_seconds: int = PrivateAttr(default=600)  # 10 minutes default
     _model_name: str = PrivateAttr(default="unknown")
 
-    def __init__(self, base_llm: Any, timeout_seconds: int = 60, **kwargs):
+    def __init__(self, base_llm: Any, timeout_seconds: int = 600, **kwargs):
         """
         Initialize LLM with timeout wrapper
 
         Args:
             base_llm: The underlying LLM instance
-            timeout_seconds: Maximum seconds to wait for LLM response (default: 60)
+            timeout_seconds: Maximum seconds to wait for LLM response (default: 600 = 10 minutes)
+                            Production-grade timeout to handle complex prompts without timing out.
         """
         super().__init__(**kwargs)
         self._base_llm = base_llm
@@ -579,10 +584,11 @@ def create_llm_with_fallback(
                 **kwargs
             )
             
-            if timeout:
-                primary_llm = LLMWithTimeout(gemini_llm, timeout_seconds=timeout)
-            else:
-                primary_llm = gemini_llm
+            # Always wrap with timeout for production stability
+            # Default: 600 seconds (10 minutes) if not specified
+            effective_timeout = timeout if timeout else 600
+            primary_llm = LLMWithTimeout(gemini_llm, timeout_seconds=effective_timeout)
+            logger.info(f"[LLM_FALLBACK] Primary LLM wrapped with {effective_timeout}s timeout")
                 
         except Exception as e:
             logger.warning(f"[LLM_FALLBACK] Failed to init Primary ({model}): {e}")
@@ -602,10 +608,11 @@ def create_llm_with_fallback(
                 **kwargs
             )
             
-            if timeout:
-                fallback_llm = LLMWithTimeout(openai_llm, timeout_seconds=timeout)
-            else:
-                fallback_llm = openai_llm
+            # Always wrap with timeout for production stability
+            # Default: 600 seconds (10 minutes) if not specified
+            effective_timeout = timeout if timeout else 600
+            fallback_llm = LLMWithTimeout(openai_llm, timeout_seconds=effective_timeout)
+            logger.info(f"[LLM_FALLBACK] Fallback LLM wrapped with {effective_timeout}s timeout")
                 
         except Exception as e:
             logger.warning(f"[LLM_FALLBACK] Failed to init Fallback ({model}): {e}")

@@ -282,7 +282,7 @@ def get_ui_route(tags: ResponseTags) -> str:
     route_map = {
         IntentType.SOLUTION: "solution-design",
         IntentType.PRODUCT_SEARCH: "product-search",
-        IntentType.PRODUCT_INFO: "knowledge-base",
+        IntentType.ENGENIE_CHAT: "knowledge-base",
         IntentType.CHAT: "chat",
         IntentType.INVALID: "error"
     }

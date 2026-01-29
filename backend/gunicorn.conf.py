@@ -86,7 +86,7 @@ limit_request_fields = 100
 # Access log format with timing information
 access_log_format = '%(h)s %(l)s %(u)s %(t)s "%(r)s" %(s)s %(b)s "%(f)s" "%(a)s" %(D)s'
 
-# Log to stdout/stderr (Docker/systemd friendly)
+# Log to stdout/stderr (Systemd friendly)
 accesslog = os.getenv("GUNICORN_ACCESS_LOG", "-")  # "-" means stdout
 errorlog = os.getenv("GUNICORN_ERROR_LOG", "-")    # "-" means stderr
 
@@ -113,7 +113,7 @@ proc_name = "aipr-gunicorn"
 # Server Mechanics
 # =============================================================================
 
-# Daemonize (keep False for Docker/systemd - they handle daemonization)
+# Daemonize (keep False for Systemd - it handles daemonization)
 daemon = False
 
 # PID file location

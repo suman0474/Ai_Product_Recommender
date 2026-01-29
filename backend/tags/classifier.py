@@ -14,7 +14,7 @@ from .models import (
     ContentFlags, create_tags
 )
 from .constants import (
-    SOLUTION_KEYWORDS, PRODUCT_SEARCH_KEYWORDS, PRODUCT_INFO_KEYWORDS,
+    SOLUTION_KEYWORDS, PRODUCT_SEARCH_KEYWORDS, ENGENIE_CHAT_KEYWORDS,
     CHAT_KEYWORDS, INVALID_KEYWORDS, INCOMPLETE_PHRASES, FOLLOWUP_PHRASES,
     INSTRUMENT_FIELDS, ACCESSORY_FIELDS, PRODUCT_MODEL_PATTERNS, VENDOR_NAMES,
     WORKFLOW_TO_INTENT_MAP, contains_any_keyword, count_keyword_matches,
@@ -154,7 +154,7 @@ class TagClassifier:
             elif workflow == 'grounded_chat':
                 # Could be product_info or chat, need to analyze further
                 if self._has_product_reference(user_input_lower):
-                    return IntentType.PRODUCT_INFO
+                    return IntentType.ENGENIE_CHAT
                 else:
                     return IntentType.CHAT
 
@@ -171,7 +171,7 @@ class TagClassifier:
                 # Special case for grounded_chat
                 if intent_str == 'chat':
                     if self._has_product_reference(user_input_lower):
-                        return IntentType.PRODUCT_INFO
+                        return IntentType.ENGENIE_CHAT
                     else:
                         return IntentType.CHAT
 
@@ -189,19 +189,19 @@ class TagClassifier:
         # Count matches for each intent type
         solution_matches = count_keyword_matches(user_input, SOLUTION_KEYWORDS)
         product_search_matches = count_keyword_matches(user_input, PRODUCT_SEARCH_KEYWORDS)
-        product_info_matches = count_keyword_matches(user_input, PRODUCT_INFO_KEYWORDS)
+        engenie_chat_matches = count_keyword_matches(user_input, ENGENIE_CHAT_KEYWORDS)
         chat_matches = count_keyword_matches(user_input, CHAT_KEYWORDS)
 
         # Find the intent with most matches
-        max_matches = max(solution_matches, product_search_matches, product_info_matches, chat_matches)
+        max_matches = max(solution_matches, product_search_matches, engenie_chat_matches, chat_matches)
 
         if max_matches > 0:
             if solution_matches == max_matches:
                 return IntentType.SOLUTION
             elif product_search_matches == max_matches:
                 return IntentType.PRODUCT_SEARCH
-            elif product_info_matches == max_matches:
-                return IntentType.PRODUCT_INFO
+            elif engenie_chat_matches == max_matches:
+                return IntentType.ENGENIE_CHAT
             elif chat_matches == max_matches:
                 return IntentType.CHAT
 
@@ -217,10 +217,10 @@ class TagClassifier:
         if 'ranked_results' in response_data or 'ranked_products' in response_data:
             return IntentType.PRODUCT_SEARCH
 
-        # Has answer with product reference → likely PRODUCT_INFO
+        # Has answer with product reference → likely ENGENIE_CHAT
         if 'answer' in response_data:
             if self._has_product_reference(user_input_lower):
-                return IntentType.PRODUCT_INFO
+                return IntentType.ENGENIE_CHAT
             else:
                 return IntentType.CHAT
 
@@ -318,7 +318,7 @@ class TagClassifier:
                 if response_text and '?' in response_text:
                     return ResponseStatus.INCOMPLETE
 
-        elif intent_type == IntentType.PRODUCT_INFO:
+        elif intent_type == IntentType.ENGENIE_CHAT:
             # Product info needs answer
             if not response_data.get('answer') and not response_text:
                 return ResponseStatus.INCOMPLETE

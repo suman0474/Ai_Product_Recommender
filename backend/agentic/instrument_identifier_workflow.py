@@ -898,6 +898,52 @@ def run_instrument_identifier_workflow(
 
 
 # ============================================================================
+# WORKFLOW REGISTRATION (Level 4.5)
+# ============================================================================
+
+def _register_workflow():
+    """Register this workflow with the central registry."""
+    try:
+        from .workflow_registry import get_workflow_registry, WorkflowMetadata, RetryPolicy, RetryStrategy
+        
+        get_workflow_registry().register(WorkflowMetadata(
+            name="instrument_identifier",
+            display_name="Instrument Identifier Workflow",
+            description="Identifies single product requirements with clear specifications. Generates selection list of instruments and accessories for user to choose from. Does not perform product search - only identification.",
+            keywords=[
+                "transmitter", "sensor", "valve", "flowmeter", "thermocouple", "rtd",
+                "pressure", "temperature", "level", "flow", "analyzer", "positioner",
+                "meter", "gauge", "controller", "actuator", "detector"
+            ],
+            intents=["requirements", "additional_specs", "instrument", "accessories", "spec_request"],
+            capabilities=[
+                "single_product",
+                "standards_enrichment",
+                "accessory_matching",
+                "selection_list",
+                "keyword_fallback"
+            ],
+            entry_function=run_instrument_identifier_workflow,
+            priority=80,  # High priority for direct product requests
+            tags=["core", "identification", "products"],
+            retry_policy=RetryPolicy(
+                strategy=RetryStrategy.EXPONENTIAL_BACKOFF,
+                max_retries=3,
+                base_delay_ms=1000
+            ),
+            min_confidence_threshold=0.5
+        ))
+        logger.info("[InstrumentIdentifierWorkflow] Registered with WorkflowRegistry")
+    except ImportError as e:
+        logger.debug(f"[InstrumentIdentifierWorkflow] Registry not available: {e}")
+    except Exception as e:
+        logger.warning(f"[InstrumentIdentifierWorkflow] Failed to register: {e}")
+
+# Register on module load
+_register_workflow()
+
+
+# ============================================================================
 # EXPORTS
 # ============================================================================
 

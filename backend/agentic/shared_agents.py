@@ -30,8 +30,8 @@ from .intent_classification_routing_agent import (
     WorkflowTarget
 )
 
-# Import DataSource from product_info_intent_agent for convenience
-from .product_info_intent_agent import DataSource as IntentDataSource
+# Import DataSource from engenie_chat_intent_agent for convenience
+from .engenie_chat.engenie_chat_intent_agent import DataSource as IntentDataSource
 logger = logging.getLogger(__name__)
 
 

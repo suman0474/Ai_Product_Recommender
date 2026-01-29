@@ -15,6 +15,17 @@ from ..checkpointing import compile_with_checkpointing
 
 import os
 from llm_fallback import create_llm_with_fallback
+
+# Import new utility modules for Phase 1 & 2 gap fixes
+try:
+    from ..fast_fail import should_fail_fast, check_and_set_fast_fail
+    from ..rag_cache import cache_get, cache_set
+    from ..rag_logger import StandardsRAGLogger, set_trace_id
+    from ..circuit_breaker import get_circuit_breaker, CircuitOpenError
+    UTILITIES_AVAILABLE = True
+except ImportError:
+    UTILITIES_AVAILABLE = False
+
 logger = logging.getLogger(__name__)
 
 
@@ -273,8 +284,16 @@ def generate_answer_node(state: StandardsRAGState) -> StandardsRAGState:
     Node 3: Generate answer using StandardsChatAgent.
 
     Passes question and context to Google Gemini.
+
+    CRITICAL FIX: Increment retry_count here (not in retry_decision_node)
+    because conditional edge functions should not modify state.
     """
-    logger.info(f"[Node 3] Generating answer (attempt {state['generation_count'] + 1})...")
+    # Increment retry_count if this is a retry (generation_count > 0 means we've already generated once)
+    if state['generation_count'] > 0:
+        state['retry_count'] = state.get('retry_count', 0) + 1
+        logger.info(f"[Node 3] RETRY #{state['retry_count']} - Generating answer (attempt {state['generation_count'] + 1})...")
+    else:
+        logger.info(f"[Node 3] Generating answer (attempt {state['generation_count'] + 1})...")
 
     try:
         # Check if we have documents
@@ -297,9 +316,10 @@ def generate_answer_node(state: StandardsRAGState) -> StandardsRAGState:
         # Create agent
         agent = create_standards_chat_agent(temperature=0.1)
 
-        # Generate answer
+        # Generate answer using resolved question for follow-up support
+        # FIX: Use resolved_question instead of raw question for proper context
         result = agent.run(
-            question=state['question'],
+            question=state['resolved_question'] or state['question'],
             top_k=state['top_k']
         )
 
@@ -414,31 +434,41 @@ def retry_decision_node(state: StandardsRAGState) -> Literal["finalize", "genera
     Node 5: Decide whether to retry or finalize.
 
     Routes to finalize if valid or max retries reached, else retry generation.
+
+    CRITICAL FIX: This is a conditional edge function - it should NOT modify state.
+    State modifications should happen in actual nodes, not conditional routers.
+    The retry_count is now incremented in generate_answer_node instead.
     """
     logger.info("[Node 5] Making retry decision...")
+
+    # Get current state values
+    should_fail_fast = state.get('should_fail_fast', False)
+    is_valid = state.get('is_valid', False)
+    retry_count = state.get('retry_count', 0)
+    max_retries = state.get('max_retries', 2)
 
     # ╔════════════════════════════════════════════════════════════════════════╗
     # ║  [FIX #A3] FAST-FAIL SKIP RETRIES                                    ║
     # ║  If unrecoverable error detected, skip all retries                    ║
     # ║  Prevents 60-80+ seconds of wasteful retry attempts                  ║
     # ╚════════════════════════════════════════════════════════════════════════╝
-    if state.get('should_fail_fast', False):
+    if should_fail_fast:
         logger.warning("[FIX #A3] 🔴 FAST-FAIL TRIGGERED - Skipping all retries!")
         return "finalize"
 
     # If valid, finalize
-    if state['is_valid']:
+    if is_valid:
         logger.info("Response valid - proceeding to finalize")
         return "finalize"
 
-    # If max retries reached, finalize anyway with warning
-    if state['retry_count'] >= state['max_retries']:
-        logger.warning(f"Max retries ({state['max_retries']}) reached - proceeding to finalize")
+    # CRITICAL: Check max retries BEFORE routing to retry
+    # This prevents the recursion limit from being hit
+    if retry_count >= max_retries:
+        logger.warning(f"Max retries ({max_retries}) reached (count={retry_count}) - proceeding to finalize")
         return "finalize"
 
-    # Retry
-    state['retry_count'] += 1
-    logger.info(f"Retrying (attempt {state['retry_count'] + 1}/{state['max_retries'] + 1})...")
+    # Route to retry (generate_answer_node will increment retry_count)
+    logger.info(f"Will retry (current count={retry_count}, max={max_retries})")
     return "generate_answer"
 
 
@@ -584,7 +614,7 @@ def run_standards_rag_workflow(
     question: str,
     session_id: Optional[str] = None,
     top_k: int = 5,
-    recursion_limit: int = 50
+    recursion_limit: int = 15
 ) -> Dict[str, Any]:
     """
     Run the Standards RAG workflow.
@@ -593,7 +623,11 @@ def run_standards_rag_workflow(
         question: User's question
         session_id: Optional session ID for checkpointing
         top_k: Number of documents to retrieve
-        recursion_limit: Maximum recursion depth for workflow (default: 50, LangGraph default: 25)
+        recursion_limit: Maximum recursion depth for workflow (default: 15)
+            - Reduced from 50 to prevent infinite retry loops
+            - With max_retries=2, worst case is: validate(1) + retrieve(1) +
+              generate(1) + validate(1) + retry_decision(1) × 3 iterations = ~15 nodes
+            - If this limit is hit, it indicates a bug in the workflow logic
 
     Returns:
         Final result dictionary

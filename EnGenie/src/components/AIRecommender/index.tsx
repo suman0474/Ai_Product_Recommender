@@ -1322,7 +1322,7 @@ const AIRecommender = ({
         const routingResult = await classifyRoute(trimmedInput, {
           current_step: currentStep,
           context: state.productType || undefined
-        });
+        }, searchSessionId);  // Pass session ID for workflow isolation
 
         console.log('[WORKFLOW_ROUTING] Classification result:', {
           target_workflow: routingResult.target_workflow,

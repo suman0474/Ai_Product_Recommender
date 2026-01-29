@@ -42,6 +42,23 @@ from .ranking_tool import RankingTool
 # Configure logging
 logger = logging.getLogger(__name__)
 
+# Debug flags for workflow debugging
+try:
+    from debug_flags import debug_log, timed_execution, is_debug_enabled
+    DEBUG_AVAILABLE = True
+except ImportError:
+    DEBUG_AVAILABLE = False
+    def debug_log(module, **kwargs):
+        def decorator(func):
+            return func
+        return decorator
+    def timed_execution(module, **kwargs):
+        def decorator(func):
+            return func
+        return decorator
+    def is_debug_enabled(module):
+        return False
+
 
 class ProductSearchWorkflow:
     """
@@ -104,6 +121,8 @@ class ProductSearchWorkflow:
         logger.info("[ProductSearchWorkflow]   - Vendor Workers: %d",
                    max_vendor_workers)
 
+    @timed_execution("WORKFLOW", threshold_ms=30000)
+    @debug_log("WORKFLOW", log_args=True, log_result=False)
     def run_single_product_workflow(
         self,
         user_input: str,
@@ -378,6 +397,8 @@ class ProductSearchWorkflow:
             result['error_type'] = type(e).__name__
             return result
 
+    @timed_execution("WORKFLOW", threshold_ms=10000)
+    @debug_log("WORKFLOW")
     def run_validation_only(
         self,
         user_input: str,
@@ -403,6 +424,8 @@ class ProductSearchWorkflow:
             session_id=session_id
         )
 
+    @timed_execution("WORKFLOW", threshold_ms=15000)
+    @debug_log("WORKFLOW")
     def run_advanced_params_only(
         self,
         product_type: str,
@@ -425,15 +448,18 @@ class ProductSearchWorkflow:
             session_id=session_id
         )
 
+    @timed_execution("WORKFLOW", threshold_ms=60000)
+    @debug_log("WORKFLOW", log_args=True, log_result=False)
     def run_analysis_only(
         self,
         structured_requirements: Dict[str, Any],
         product_type: str,
         schema: Optional[Dict[str, Any]] = None,
-        session_id: Optional[str] = None
+        session_id: Optional[str] = None,
+        skip_advanced_params: bool = False
     ) -> Dict[str, Any]:
         """
-        Run only the analysis phase (Steps 4-5: Vendor Analysis + Ranking).
+        Run only the analysis phase (Advanced Params + Vendor Analysis + Ranking).
 
         This is called after the user has confirmed their requirements through
         the interactive workflow. The frontend collects requirements via
@@ -449,11 +475,13 @@ class ProductSearchWorkflow:
             product_type: Detected product type
             schema: Optional schema for validation
             session_id: Session identifier
+            skip_advanced_params: Skip advanced parameters discovery (default: False)
 
         Returns:
             Analysis result with vendor matches and ranked products
             {
                 "success": bool,
+                "advancedParameters": {...},
                 "vendorAnalysis": {...},
                 "overallRanking": {...},
                 "topRecommendation": {...}
@@ -466,6 +494,7 @@ class ProductSearchWorkflow:
         logger.info(f"[ProductSearchWorkflow] Running ANALYSIS ONLY")
         logger.info(f"[ProductSearchWorkflow] Session: {session_id}")
         logger.info(f"[ProductSearchWorkflow] Product Type: {product_type}")
+        logger.info(f"[ProductSearchWorkflow] Skip Advanced Params: {skip_advanced_params}")
         logger.info(f"{'='*70}")
 
         result = {
@@ -475,8 +504,60 @@ class ProductSearchWorkflow:
         }
 
         try:
-            # STEP 4: VENDOR ANALYSIS
-            logger.info(f"\n[STEP 1/2] VENDOR ANALYSIS")
+            # =================================================================
+            # STEP 1: ADVANCED PARAMETERS DISCOVERY (if not skipped)
+            # Discovers latest advanced specifications from vendors
+            # =================================================================
+            discovered_specs = []
+            if not skip_advanced_params:
+                logger.info(f"\n[STEP 1/3] ADVANCED PARAMETERS DISCOVERY")
+                logger.info("-" * 70)
+
+                advanced_params_result = self.advanced_params_tool.discover(
+                    product_type=product_type,
+                    session_id=session_id,
+                    existing_schema=schema
+                )
+
+                discovered_specs = advanced_params_result.get('unique_specifications', [])
+                specs_count = len(discovered_specs)
+
+                if specs_count > 0:
+                    logger.info(f"[AdvancedParametersTool] Discovered {specs_count} new advanced specifications")
+                    for spec in discovered_specs[:5]:
+                        logger.info(f"  - {spec.get('name', spec.get('key'))}")
+                    if specs_count > 5:
+                        logger.info(f"  ... and {specs_count - 5} more")
+                else:
+                    logger.info("[AdvancedParametersTool] No new advanced specifications found")
+
+                result['advancedParameters'] = {
+                    "discovered_specifications": discovered_specs,
+                    "total_discovered": specs_count,
+                    "existing_filtered": advanced_params_result.get('existing_specifications_filtered', 0),
+                    "vendors_searched": advanced_params_result.get('vendors_searched', []),
+                    "success": advanced_params_result.get('success', True)
+                }
+
+                # Merge discovered specs into structured requirements
+                if discovered_specs and 'selectedAdvancedParams' not in structured_requirements:
+                    structured_requirements['selectedAdvancedParams'] = {}
+                for spec in discovered_specs:
+                    spec_key = spec.get('key', '')
+                    if spec_key and spec_key not in structured_requirements.get('selectedAdvancedParams', {}):
+                        structured_requirements.setdefault('selectedAdvancedParams', {})[spec_key] = ""
+            else:
+                logger.info(f"\n[STEP 1/3] ADVANCED PARAMETERS DISCOVERY - SKIPPED")
+                result['advancedParameters'] = {
+                    "discovered_specifications": [],
+                    "total_discovered": 0,
+                    "skipped": True
+                }
+
+            # =================================================================
+            # STEP 2: VENDOR ANALYSIS
+            # =================================================================
+            logger.info(f"\n[STEP 2/3] VENDOR ANALYSIS")
             logger.info("-" * 70)
 
             vendor_analysis_result = self.vendor_analysis_tool.analyze(
@@ -503,8 +584,8 @@ class ProductSearchWorkflow:
                 "analysisSummary": vendor_analysis_result.get('analysis_summary', '')
             }
 
-            # STEP 5: RANKING
-            logger.info(f"\n[STEP 2/2] RANKING")
+            # STEP 3: RANKING
+            logger.info(f"\n[STEP 3/3] RANKING")
             logger.info("-" * 70)
 
             ranking_result = self.ranking_tool.rank(
@@ -542,7 +623,9 @@ class ProductSearchWorkflow:
             result['analysisResult'] = {
                 "productType": product_type,
                 "vendorAnalysis": result['vendorAnalysis'],
-                "overallRanking": result['overallRanking']
+                "overallRanking": result['overallRanking'],
+                "advancedParameters": result.get('advancedParameters', {}),
+                "discoveredSpecifications": discovered_specs
             }
 
             # Debug log for final result structure

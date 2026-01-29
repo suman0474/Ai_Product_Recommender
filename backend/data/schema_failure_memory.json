@@ -887,6 +887,20 @@
         "sources_used": [
           "product_template"
         ]
+      },
+      {
+        "success_id": "succ_Pressure Transmitter_20260129155556023788",
+        "product_type": "Pressure Transmitter",
+        "prompt_hash": "b44e6b3d45afff37",
+        "prompt_preview": "[parallel generation]",
+        "fields_populated": 60,
+        "total_fields": 60,
+        "confidence_score": 1.0,
+        "timestamp": "2026-01-29T15:55:56.023822",
+        "duration_ms": 27423,
+        "sources_used": [
+          "product_template"
+        ]
       }
     ],
     "Calibration Kits": [
@@ -1154,6 +1168,20 @@
         "duration_ms": 37204,
         "sources_used": []
       }
+    ],
+    "Coriolis Flow Transmitter": [
+      {
+        "success_id": "succ_Coriolis Flow Transmitter_20260129155533939503",
+        "product_type": "Coriolis Flow Transmitter",
+        "prompt_hash": "b44e6b3d45afff37",
+        "prompt_preview": "[parallel generation]",
+        "fields_populated": 1,
+        "total_fields": 60,
+        "confidence_score": 0.016666666666666666,
+        "timestamp": "2026-01-29T15:55:33.939580",
+        "duration_ms": 33707,
+        "sources_used": []
+      }
     ]
   },
   "optimized_prompts": {
@@ -1164,10 +1192,10 @@
   },
   "stats": {
     "total_failures": 37,
-    "total_successes": 39,
+    "total_successes": 41,
     "patterns_detected": 1,
     "recoveries_attempted": 0,
     "recoveries_successful": 0
   },
-  "saved_at": "2026-01-27T13:44:00.231344"
+  "saved_at": "2026-01-29T15:55:56.025513"
 }

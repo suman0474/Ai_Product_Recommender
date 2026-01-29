@@ -1,6 +1,6 @@
 // api.ts - No changes are necessary here
 import axios from "axios";
-import { getSessionManager } from "../../services/SessionManager";
+import { getSessionManager, WorkflowType as SessionWorkflowType } from "../../services/SessionManager";
 import {
   ValidationResult,
   AnalysisResult,
@@ -765,65 +765,71 @@ export const approveOrRejectUser = async (
  */
 /**
  * Classifies user intent and determines next workflow step
- * Supports workflow state locking - once user enters a workflow, they stay in it
+ * Uses SessionManager for workflow state (cross-tab persistence)
  */
 
-// Store current workflow state (module-level for persistence)
-let currentWorkflowState: string | null = null;
+// ============================================================================
+// WORKFLOW STATE HELPERS (delegates to SessionManager)
+// ============================================================================
 
-export const getCurrentWorkflow = (): string | null => currentWorkflowState;
+export const getCurrentWorkflow = (): string | null => {
+  return getSessionManager().getWorkflow();
+};
+
 export const setCurrentWorkflow = (workflow: string | null): void => {
-  currentWorkflowState = workflow;
-  console.log('[WORKFLOW_STATE] Current workflow set to:', workflow);
-};
-export const clearWorkflow = (): void => {
-  currentWorkflowState = null;
-  console.log('[WORKFLOW_STATE] Workflow cleared');
+  getSessionManager().setWorkflow(workflow as SessionWorkflowType);
 };
 
+export const clearWorkflow = (): void => {
+  getSessionManager().clearWorkflow();
+};
+
+/**
+ * @deprecated Use classifyRoute() instead - this is kept for backward compatibility
+ */
 export const classifyIntent = async (userInput: string, searchSessionId?: string): Promise<IntentClassificationResult> => {
+  console.warn('[DEPRECATED] classifyIntent() - use classifyRoute() instead');
+
   try {
-    const payload: any = {
+    const sessionManager = getSessionManager();
+    const currentWorkflow = sessionManager.getWorkflow();
+
+    const payload: Record<string, any> = {
       userInput,
+      search_session_id: searchSessionId || sessionManager.getMainThreadId() || 'default',
     };
 
-    if (searchSessionId) {
-      payload.search_session_id = searchSessionId;
+    // Pass workflow as hint for backend validation
+    if (currentWorkflow) {
+      payload.workflow_hint = currentWorkflow;
     }
 
-    // Pass current workflow for state locking
-    if (currentWorkflowState) {
-      payload.currentWorkflow = currentWorkflowState;
-      console.log('[INTENT_CLASSIFY] Passing current workflow:', currentWorkflowState);
-    }
+    const response = await axios.post('/api/intent', payload);
 
-    const response = await axios.post(`/api/intent`, payload);
-
-    // Update workflow state from response
+    // Update workflow from backend decision
     if (response.data.currentWorkflow !== undefined) {
       if (response.data.currentWorkflow === null) {
-        clearWorkflow();
+        sessionManager.clearWorkflow();
       } else {
-        setCurrentWorkflow(response.data.currentWorkflow);
+        sessionManager.setWorkflow(response.data.currentWorkflow as SessionWorkflowType);
       }
     }
 
-    // Log if workflow was locked
-    if (response.data.workflowLocked) {
-      console.log('[INTENT_CLASSIFY] Workflow LOCKED - staying in:', response.data.currentWorkflow);
-    }
+    // Refresh TTL on activity
+    sessionManager.refreshWorkflowTTL();
 
     return response.data;
   } catch (error: any) {
     console.error("Intent classification error:", error.response?.data || error.message);
-    // Fallback classification
     return {
       intent: "other",
       nextStep: null,
-      resumeWorkflow: false
+      resumeWorkflow: false,
+      retryable: !error.response || error.response.status >= 500
     };
   }
 };
+
 
 /**
  * Classifies user query and determines which workflow to route to.
@@ -840,16 +846,33 @@ export const classifyIntent = async (userInput: string, searchSessionId?: string
  */
 export const classifyRoute = async (
   query: string,
-  context?: { current_step?: string; context?: string }
+  context?: { current_step?: string; context?: string },
+  searchSessionId?: string
 ): Promise<WorkflowRoutingResult> => {
   try {
-    const payload: any = { query };
+    const sessionManager = getSessionManager();
+    const currentWorkflow = sessionManager.getWorkflow();
+
+    const payload: Record<string, any> = {
+      query,
+      // Always pass session ID from SessionManager if not provided
+      search_session_id: searchSessionId || sessionManager.getMainThreadId() || 'default',
+    };
 
     if (context) {
       payload.context = context;
     }
 
-    console.log('[CLASSIFY_ROUTE] Classifying query for workflow routing:', query.substring(0, 50) + '...');
+    // Pass workflow as hint for backend validation
+    if (currentWorkflow) {
+      payload.workflow_hint = currentWorkflow;
+    }
+
+    console.log('[CLASSIFY_ROUTE] Request:', {
+      query: query.substring(0, 50),
+      session: payload.search_session_id?.substring(0, 16),
+      hint: currentWorkflow
+    });
 
     const response = await axios.post('/api/agentic/classify-route', payload);
 
@@ -858,6 +881,14 @@ export const classifyRoute = async (
     }
 
     const result = response.data.data as WorkflowRoutingResult;
+
+    // Update workflow from backend decision
+    if (result.target_workflow && result.target_workflow !== 'out_of_domain') {
+      sessionManager.setWorkflow(result.target_workflow as SessionWorkflowType);
+    }
+
+    // Refresh TTL on activity
+    sessionManager.refreshWorkflowTTL();
 
     console.log('[CLASSIFY_ROUTE] Routing decision:', {
       target_workflow: result.target_workflow,
@@ -868,16 +899,19 @@ export const classifyRoute = async (
     return result;
   } catch (error: any) {
     console.error('[CLASSIFY_ROUTE] Error:', error.response?.data || error.message);
-    // Fallback to instrument_identifier (default workflow)
+
+    // Error handling with retryable flag
+    const isRetryable = !error.response || error.response.status >= 500;
+
     return {
       query: query,
       target_workflow: 'instrument_identifier',
-      intent: 'requirements',
-      confidence: 0.5,
-      reasoning: 'Fallback due to classification error',
+      intent: 'error',
+      confidence: 0,
+      reasoning: `Fallback due to classification error: ${error.message}`,
       is_solution: false,
       solution_indicators: [],
-      extracted_info: {},
+      extracted_info: { error: true, retryable: isRetryable },
       classification_time_ms: 0,
       timestamp: new Date().toISOString(),
       reject_message: null

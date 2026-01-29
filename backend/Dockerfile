@@ -1,108 +1,85 @@
-# ============================================================================
-# AI Product Recommender - Backend Dockerfile
-# ============================================================================
-# Multi-stage build for optimized Python/Flask production container
+# =============================================================================
+# AIPR Backend - Dockerfile
+# =============================================================================
+# Multi-stage Python build for Flask API with Gunicorn
 
-# Stage 1: Builder - Install dependencies in a separate stage
-FROM python:3.11-slim-bookworm AS builder
+# Stage 1: Builder - Install dependencies
+FROM python:3.11-slim AS builder
 
-# Set environment variables
-ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=1 \
-    PIP_DISABLE_PIP_VERSION_CHECK=1
+WORKDIR /app
 
 # Install build dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    gcc \
-    g++ \
-    libffi-dev \
-    libmagic1 \
-    libmagic-dev \
-    libpq-dev \
     build-essential \
+    libmagic1 \
     && rm -rf /var/lib/apt/lists/*
 
-# Create virtual environment
-RUN python -m venv /opt/venv
-ENV PATH="/opt/venv/bin:$PATH"
-
-# Copy and install requirements
+# Copy requirements first for better caching
 COPY requirements.txt .
-RUN pip install --upgrade pip setuptools wheel && \
-    pip install -r requirements.txt
 
-# ============================================================================
-# Stage 2: Production - Lean runtime image
-# ============================================================================
-FROM python:3.11-slim-bookworm AS production
+# Install Python dependencies
+RUN pip install --no-cache-dir --user -r requirements.txt
+
+# =============================================================================
+# Stage 2: Production - Gunicorn WSGI Server
+# =============================================================================
+FROM python:3.11-slim AS production
 
 # Labels
-LABEL maintainer="AI Product Recommender Team" \
+LABEL maintainer="AIPR Team" \
     version="1.0.0" \
-    description="Backend API for AI Product Recommender"
+    description="AIPR Backend - Flask API with LangChain/LangGraph"
 
-# Set environment variables
-ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1 \
-    PYTHONFAULTHANDLER=1 \
-    # Flask settings
-    FLASK_ENV=production \
-    FLASK_APP=main.py \
-    # Gunicorn settings
-    GUNICORN_BIND=0.0.0.0:5000 \
-    GUNICORN_WORKERS=2 \
-    GUNICORN_THREADS=4 \
-    GUNICORN_TIMEOUT=3600 \
-    GUNICORN_LOG_LEVEL=info \
-    # Python path
-    PATH="/opt/venv/bin:$PATH"
+# Create non-root user for security
+RUN groupadd -r aipr && useradd -r -g aipr aipr
+
+WORKDIR /app
 
 # Install runtime dependencies only
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libmagic1 \
-    libpq5 \
     curl \
-    # Required for PDF processing
-    poppler-utils \
-    # Required for some image processing
-    libgl1-mesa-glx \
-    libglib2.0-0 \
-    && rm -rf /var/lib/apt/lists/* \
-    && apt-get clean
+    && rm -rf /var/lib/apt/lists/*
 
-# Create non-root user for security
-RUN groupadd -r appuser && useradd -r -g appuser appuser
+# Copy Python packages from builder
+COPY --from=builder /root/.local /home/aipr/.local
 
-# Set working directory
-WORKDIR /app
+# Ensure scripts in .local are usable
+ENV PATH=/home/aipr/.local/bin:$PATH
 
-# Copy virtual environment from builder
-COPY --from=builder /opt/venv /opt/venv
-
-# Copy application source code
-COPY --chown=appuser:appuser . .
+# Copy application code
+COPY --chown=aipr:aipr . .
 
 # Create necessary directories
-RUN mkdir -p /app/flask_session /app/instance /app/logs /tmp/flask_session && \
-    chown -R appuser:appuser /app /tmp/flask_session
+RUN mkdir -p /app/flask_session /app/chroma_data /app/vector_store_data /app/static \
+    && chown -R aipr:aipr /app
 
-# Create data directories for vector stores and caches
-RUN mkdir -p /app/vector_store_data /app/chroma_data && \
-    chown -R appuser:appuser /app/vector_store_data /app/chroma_data
+# Copy entrypoint script
+COPY --chown=aipr:aipr docker-entrypoint.sh /docker-entrypoint.sh
+RUN chmod +x /docker-entrypoint.sh
+
+# Environment variables
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    FLASK_APP=main.py \
+    FLASK_ENV=production \
+    GUNICORN_WORKERS=4 \
+    GUNICORN_THREADS=4 \
+    GUNICORN_TIMEOUT=3600 \
+    GUNICORN_BIND=0.0.0.0:5000
 
 # Switch to non-root user
-USER appuser
+USER aipr
 
 # Expose port
 EXPOSE 5000
 
 # Health check
-HEALTHCHECK --interval=30s --timeout=30s --start-period=60s --retries=3 \
-    CMD curl -f http://localhost:5000/health || exit 1
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+    CMD curl --fail http://localhost:5000/health || exit 1
 
-# Start command - Use gunicorn for production
-# Start command - Use entrypoint script
-COPY --chown=appuser:appuser entrypoint.sh .
-RUN chmod +x entrypoint.sh
-ENTRYPOINT ["./entrypoint.sh"]
+# Entrypoint
+ENTRYPOINT ["/docker-entrypoint.sh"]
+
+# Default command - Gunicorn with production config
+CMD ["gunicorn", "-c", "gunicorn.conf.py", "main:app"]

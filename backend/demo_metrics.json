@@ -1,0 +1,183 @@
+{
+  "summary": {
+    "total_calls": 7,
+    "successful_calls": 6,
+    "failed_calls": 1,
+    "success_rate": "85.7%",
+    "total_duration_ms": 2293.06,
+    "avg_duration_ms": 327.58,
+    "total_tokens_in": 7200,
+    "total_tokens_out": 3500,
+    "total_tokens": 10700,
+    "estimated_cost_usd": 0.0151,
+    "session_duration_seconds": 2.29,
+    "calls_per_minute": 183.16
+  },
+  "by_function": {
+    "identify_instruments": {
+      "total_calls": 1,
+      "successful_calls": 1,
+      "failed_calls": 0,
+      "avg_duration_ms": 450.56,
+      "min_duration_ms": 450.56,
+      "max_duration_ms": 450.56,
+      "total_tokens": 2300,
+      "estimated_cost_usd": 0.0059,
+      "calls_by_model": {
+        "gemini-2.5-pro": 1
+      },
+      "errors": {}
+    },
+    "identify_accessories": {
+      "total_calls": 1,
+      "successful_calls": 1,
+      "failed_calls": 0,
+      "avg_duration_ms": 820.48,
+      "min_duration_ms": 820.48,
+      "max_duration_ms": 820.48,
+      "total_tokens": 3200,
+      "estimated_cost_usd": 0.0085,
+      "calls_by_model": {
+        "gemini-2.5-pro": 1
+      },
+      "errors": {}
+    },
+    "generate_schema": {
+      "total_calls": 1,
+      "successful_calls": 1,
+      "failed_calls": 0,
+      "avg_duration_ms": 120.51,
+      "min_duration_ms": 120.51,
+      "max_duration_ms": 120.51,
+      "total_tokens": 800,
+      "estimated_cost_usd": 0.0001,
+      "calls_by_model": {
+        "gemini-2.5-flash": 1
+      },
+      "errors": {}
+    },
+    "validate_response": {
+      "total_calls": 1,
+      "successful_calls": 1,
+      "failed_calls": 0,
+      "avg_duration_ms": 80.47,
+      "min_duration_ms": 80.47,
+      "max_duration_ms": 80.47,
+      "total_tokens": 500,
+      "estimated_cost_usd": 0.0001,
+      "calls_by_model": {
+        "gemini-2.5-flash": 1
+      },
+      "errors": {}
+    },
+    "standards_rag_query": {
+      "total_calls": 2,
+      "successful_calls": 1,
+      "failed_calls": 1,
+      "avg_duration_ms": 235.22,
+      "min_duration_ms": 220.17,
+      "max_duration_ms": 250.26,
+      "total_tokens": 2600,
+      "estimated_cost_usd": 0.0003,
+      "calls_by_model": {
+        "gemini-2.5-flash": 2
+      },
+      "errors": {
+        "Simulated error": 1
+      }
+    },
+    "deep_agent_enrich": {
+      "total_calls": 1,
+      "successful_calls": 1,
+      "failed_calls": 0,
+      "avg_duration_ms": 350.61,
+      "min_duration_ms": 350.61,
+      "max_duration_ms": 350.61,
+      "total_tokens": 1300,
+      "estimated_cost_usd": 0.0002,
+      "calls_by_model": {
+        "gemini-2.5-flash": 1
+      },
+      "errors": {}
+    }
+  },
+  "by_model": {
+    "gemini-2.5-pro": {
+      "calls": 2,
+      "total_duration_ms": 1271.04,
+      "tokens_in": 3500,
+      "tokens_out": 2000,
+      "cost": 0.0144,
+      "errors": 0,
+      "avg_duration_ms": 635.52
+    },
+    "gemini-2.5-flash": {
+      "calls": 5,
+      "total_duration_ms": 1022.02,
+      "tokens_in": 3700,
+      "tokens_out": 1500,
+      "cost": 0.0007,
+      "errors": 1,
+      "avg_duration_ms": 204.4
+    }
+  },
+  "recent_calls": [
+    {
+      "function": "deep_agent_enrich",
+      "model": "gemini-2.5-flash",
+      "duration_ms": 350.61,
+      "success": true,
+      "tokens": 1300,
+      "cost_usd": 0.00021
+    },
+    {
+      "function": "standards_rag_query",
+      "model": "gemini-2.5-flash",
+      "duration_ms": 220.17,
+      "success": false,
+      "tokens": 1000,
+      "cost_usd": 7.5e-05
+    },
+    {
+      "function": "standards_rag_query",
+      "model": "gemini-2.5-flash",
+      "duration_ms": 250.26,
+      "success": true,
+      "tokens": 1600,
+      "cost_usd": 0.000255
+    },
+    {
+      "function": "validate_response",
+      "model": "gemini-2.5-flash",
+      "duration_ms": 80.47,
+      "success": true,
+      "tokens": 500,
+      "cost_usd": 6e-05
+    },
+    {
+      "function": "generate_schema",
+      "model": "gemini-2.5-flash",
+      "duration_ms": 120.51,
+      "success": true,
+      "tokens": 800,
+      "cost_usd": 0.000128
+    },
+    {
+      "function": "identify_accessories",
+      "model": "gemini-2.5-pro",
+      "duration_ms": 820.48,
+      "success": true,
+      "tokens": 3200,
+      "cost_usd": 0.0085
+    },
+    {
+      "function": "identify_instruments",
+      "model": "gemini-2.5-pro",
+      "duration_ms": 450.56,
+      "success": true,
+      "tokens": 2300,
+      "cost_usd": 0.005875
+    }
+  ],
+  "active_calls": 0
+}

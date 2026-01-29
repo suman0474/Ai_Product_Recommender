@@ -1153,3 +1153,151 @@ def fetch_generic_product_image_fast(product_type: str) -> Dict[str, Any]:
         'use_placeholder': True,
         'reason': 'rate_limited'
     }
+
+
+# =============================================================================
+# REGENERATION WITH RATE LIMITING (For UI-triggered retry)
+# =============================================================================
+# Prevents abuse while allowing UI to retry failed image generation
+
+_regeneration_cooldowns: Dict[str, float] = {}  # Track last regeneration time per product type
+_regeneration_counts: Dict[str, int] = {}  # Track regeneration count per product type per hour
+_regeneration_lock = threading.Lock()
+_REGEN_COOLDOWN_SECONDS = 30  # Minimum 30 seconds between regeneration attempts
+_REGEN_MAX_PER_HOUR = 3  # Maximum 3 regeneration attempts per product type per hour
+
+
+def _check_regeneration_rate_limit(product_type: str) -> tuple:
+    """
+    Check if regeneration is allowed for this product type.
+    
+    Returns:
+        (allowed: bool, reason: str, wait_seconds: int)
+    """
+    import time
+    
+    normalized_type = product_type.strip().lower().replace(" ", "").replace("_", "").replace("-", "")
+    current_time = time.time()
+    
+    with _regeneration_lock:
+        # Check cooldown
+        last_regen_time = _regeneration_cooldowns.get(normalized_type, 0)
+        time_since_last = current_time - last_regen_time
+        
+        if time_since_last < _REGEN_COOLDOWN_SECONDS:
+            wait_time = int(_REGEN_COOLDOWN_SECONDS - time_since_last)
+            return (False, f"Please wait {wait_time} seconds before retrying", wait_time)
+        
+        # Check hourly limit
+        regen_count = _regeneration_counts.get(normalized_type, 0)
+        
+        # Reset count if more than an hour has passed
+        if time_since_last > 3600:
+            _regeneration_counts[normalized_type] = 0
+            regen_count = 0
+        
+        if regen_count >= _REGEN_MAX_PER_HOUR:
+            return (False, f"Maximum {_REGEN_MAX_PER_HOUR} regeneration attempts per hour reached", 0)
+        
+        return (True, "allowed", 0)
+
+
+def _record_regeneration_attempt(product_type: str):
+    """Record a regeneration attempt for rate limiting."""
+    import time
+    
+    normalized_type = product_type.strip().lower().replace(" ", "").replace("_", "").replace("-", "")
+    current_time = time.time()
+    
+    with _regeneration_lock:
+        _regeneration_cooldowns[normalized_type] = current_time
+        _regeneration_counts[normalized_type] = _regeneration_counts.get(normalized_type, 0) + 1
+
+
+def regenerate_generic_image(product_type: str) -> Dict[str, Any]:
+    """
+    Force regenerate a generic product image using LLM.
+    
+    This function is called by the UI when initial image fetch failed
+    and the user wants to retry generation.
+    
+    Includes rate limiting:
+    - 30 second cooldown between attempts per product type
+    - Maximum 3 attempts per hour per product type
+    
+    Args:
+        product_type: Product type to generate image for
+        
+    Returns:
+        {
+            'success': True/False,
+            'url': '/api/images/...' or None,
+            'reason': 'regenerated' | 'rate_limited' | 'failed',
+            'cached': False,
+            'wait_seconds': int (if rate limited)
+        }
+    """
+    logger.info(f"[REGENERATE] Regeneration request for: {product_type}")
+    
+    # Check rate limiting
+    allowed, reason, wait_seconds = _check_regeneration_rate_limit(product_type)
+    
+    if not allowed:
+        logger.warning(f"[REGENERATE] Rate limited for '{product_type}': {reason}")
+        return {
+            'success': False,
+            'url': None,
+            'reason': 'rate_limited',
+            'message': reason,
+            'wait_seconds': wait_seconds
+        }
+    
+    # Record this attempt
+    _record_regeneration_attempt(product_type)
+    
+    # Skip cache, directly generate with LLM
+    logger.info(f"[REGENERATE] Generating image with LLM for '{product_type}'...")
+    generated_image_data = _generate_image_with_llm(product_type)
+    
+    if generated_image_data:
+        # Cache to Azure
+        cache_success = cache_generic_image_to_azure(product_type, generated_image_data)
+        
+        if cache_success:
+            azure_image = get_generic_image_from_azure(product_type)
+            if azure_image:
+                logger.info(f"[REGENERATE] ✓ Successfully regenerated and cached image for '{product_type}'")
+                return {
+                    'success': True,
+                    'url': f"/api/images/{azure_image.get('azure_blob_path', '')}",
+                    'product_type': product_type,
+                    'source': 'gemini_imagen',
+                    'reason': 'regenerated',
+                    'cached': False
+                }
+        
+        # Fallback to base64 if Azure cache fails
+        import base64
+        image_bytes = generated_image_data.get('image_bytes')
+        if image_bytes:
+            base64_image = base64.b64encode(image_bytes).decode('utf-8')
+            content_type = generated_image_data.get('content_type', 'image/png')
+            logger.info(f"[REGENERATE] ✓ Returning base64 image for '{product_type}' (Azure cache failed)")
+            return {
+                'success': True,
+                'url': f"data:{content_type};base64,{base64_image}",
+                'product_type': product_type,
+                'source': 'gemini_imagen',
+                'reason': 'regenerated',
+                'cached': False,
+                'storage_fallback': 'base64'
+            }
+    
+    logger.error(f"[REGENERATE] ✗ Failed to regenerate image for '{product_type}'")
+    return {
+        'success': False,
+        'url': None,
+        'product_type': product_type,
+        'reason': 'failed',
+        'message': 'Image generation failed. The LLM may be rate limited or unavailable.'
+    }

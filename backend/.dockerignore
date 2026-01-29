@@ -1,34 +1,24 @@
-# Git
-.git
-.gitignore
-.gitattributes
+# =============================================================================
+# AIPR Backend - Docker Ignore
+# =============================================================================
 
 # Python
-__pycache__
+__pycache__/
 *.py[cod]
 *$py.class
 *.so
 .Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
 *.egg-info/
-.installed.cfg
 *.egg
+.eggs/
+dist/
+build/
+
+# Virtual environment
 venv/
 .venv/
 ENV/
 env/
-.pytest_cache/
 
 # IDE
 .idea/
@@ -36,22 +26,30 @@ env/
 *.swp
 *.swo
 
-# Environment files (copy manually or use Docker secrets)
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# Environment files (use docker-compose env instead)
 .env
 .env.*
-!.env.*.example
+!.env.example
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+tests/
+*.test.py
+
+# Logs
+*.log
+logs/
+logs.*.log
 
 # Local data (will be mounted as volumes)
 flask_session/
-instance/
-logs/
-*.db
-*.sqlite3
-
-# Large data files
-*.csv
-*.xlsx
-*.xls
 chroma_data/
 vector_store_data/
 
@@ -60,22 +58,24 @@ docs/
 *.md
 !README.md
 
-# Tests
-tests/
-test_*.py
-*_test.py
-conftest.py
-.coverage
-htmlcov/
+# Instance folder
+instance/
 
-# Docker
-Dockerfile
-docker-compose*.yml
-.docker/
+# Profiler data
+profiler/
 
-# Misc
-*.log
-*.tmp
-*.bak
-.DS_Store
-Thumbs.db
+# Claude/Gemini config
+.claude/
+
+# Large data files
+*.csv
+*.json.bak
+
+# Scripts not needed in container
+scripts/
+
+# Monitoring (optional in container)
+monitoring/
+
+# Product specifications (mounted as volume)
+PRODUCT_SPECIFICATIONS/

@@ -21,6 +21,23 @@ import threading
 # Configure logging
 logger = logging.getLogger(__name__)
 
+# Debug flags for validation tool debugging
+try:
+    from debug_flags import debug_log, timed_execution, is_debug_enabled
+    DEBUG_AVAILABLE = True
+except ImportError:
+    DEBUG_AVAILABLE = False
+    def debug_log(module, **kwargs):
+        def decorator(func):
+            return func
+        return decorator
+    def timed_execution(module, **kwargs):
+        def decorator(func):
+            return func
+        return decorator
+    def is_debug_enabled(module):
+        return False
+
 # ╔═══════════════════════════════════════════════════════════════════════════╗
 # ║  [FIX #A1] SESSION-LEVEL ENRICHMENT DEDUPLICATION                       ║
 # ║  Prevents redundant Standards RAG calls for same product in one session ║
@@ -114,6 +131,8 @@ class ValidationTool:
         logger.info("[ValidationTool] Standards enrichment: %s",
                    "enabled" if enable_standards_enrichment else "disabled")
 
+    @timed_execution("VALIDATION_TOOL", threshold_ms=20000)
+    @debug_log("VALIDATION_TOOL", log_args=True, log_result=False)
     def validate(
         self,
         user_input: str,
@@ -152,6 +171,41 @@ class ValidationTool:
             "session_id": session_id
         }
 
+        # =====================================================================
+        # FIX: Detect UI decision patterns BEFORE calling LLM
+        # UI decisions like "User selected: continue" should not be processed
+        # as product requirements. This prevents unnecessary LLM calls and
+        # provides clearer error messages.
+        # =====================================================================
+        try:
+            from debug_flags import is_ui_decision_input, get_ui_decision_error_message
+
+            if is_ui_decision_input(user_input):
+                logger.warning(f"[ValidationTool] UI decision pattern detected: '{user_input}'")
+                logger.warning("[ValidationTool] This input should be routed to a different API endpoint")
+                result.update({
+                    "success": False,
+                    "error": get_ui_decision_error_message(user_input),
+                    "error_type": "UIDecisionPatternError",
+                    "is_ui_decision": True,
+                    "hint": "Use /api/agentic/run-analysis for 'continue' actions after requirements are collected"
+                })
+                return result
+        except ImportError:
+            # Fallback if debug_flags module not available
+            ui_patterns = ["user selected:", "user clicked:", "decision:", "continue", "proceed"]
+            normalized_input = user_input.lower().strip()
+            for pattern in ui_patterns:
+                if pattern in normalized_input or normalized_input == pattern:
+                    logger.warning(f"[ValidationTool] UI decision pattern detected: '{user_input}'")
+                    result.update({
+                        "success": False,
+                        "error": f"Input '{user_input}' is a UI action, not a product requirement. Please provide product specifications.",
+                        "error_type": "UIDecisionPatternError",
+                        "is_ui_decision": True
+                    })
+                    return result
+
         try:
             # Import required tools
             from tools.schema_tools import load_schema_tool, validate_requirements_tool
@@ -171,10 +225,30 @@ class ValidationTool:
             # Handle case when LLM extraction failed (quota exceeded, API error, etc.)
             if not product_type:
                 logger.error("[ValidationTool] ✗ Product type extraction failed - no product type detected")
+                logger.error("[ValidationTool] ✗ User input was: %s", user_input[:200])
+
+                # Check if input looks like requirements or just noise
+                has_product_words = any(word in user_input.lower() for word in [
+                    "transmitter", "sensor", "meter", "gauge", "valve", "pump",
+                    "analyzer", "controller", "switch", "indicator", "recorder"
+                ])
+
+                if has_product_words:
+                    error_msg = (
+                        "Could not determine product type from your input. "
+                        "The LLM service may be temporarily unavailable. Please try again."
+                    )
+                else:
+                    error_msg = (
+                        "No product type detected in your input. "
+                        "Please describe what product you need (e.g., 'I need a pressure transmitter with 4-20mA output')."
+                    )
+
                 result.update({
                     "success": False,
-                    "error": "Product type extraction failed. The LLM may be unavailable or quota exceeded.",
-                    "error_type": "ProductTypeExtractionError"
+                    "error": error_msg,
+                    "error_type": "ProductTypeExtractionError",
+                    "user_input_preview": user_input[:100] + "..." if len(user_input) > 100 else user_input
                 })
                 return result
             

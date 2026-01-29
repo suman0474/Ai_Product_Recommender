@@ -25,7 +25,7 @@ class IntentType(str, Enum):
     UNRELATED = "unrelated"
     SOLUTION = "solution"
     PRODUCT_SEARCH = "productSearch"
-    PRODUCT_INFO = "productInfo"
+    ENGENIE_CHAT = "engenieChat"
     CHAT = "chat"
     INVALID = "invalid"
 
@@ -34,7 +34,7 @@ class WorkflowType(str, Enum):
     """Available workflow types"""
     SOLUTION = "solution"
     INSTRUMENT_IDENTIFIER = "instrument_identifier"
-    PRODUCT_INFO = "product_info"
+    ENGENIE_CHAT = "engenie_chat"
     INVALID = "invalid"
     PRODUCT_SEARCH = "product_search"
     COMPARISON = "comparison"

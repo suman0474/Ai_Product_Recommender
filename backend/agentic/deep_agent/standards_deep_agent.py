@@ -205,19 +205,19 @@ STANDARD_DOMAINS = {
 }
 
 # Mapping from domain type to actual .docx filename
-# Use absolute path to handle both Docker (/app) and local environments
+# Use absolute path to handle both production and local environments
 _current_dir = os.path.dirname(os.path.abspath(__file__))  # .../backend/agentic/deep_agent/
 _base_dir = os.path.dirname(os.path.dirname(os.path.dirname(_current_dir)))  # Go up 3 levels to backend/
 _standards_candidate_1 = os.path.join(_base_dir, "chroma_data", "Standards")  # Project root structure
 _standards_candidate_2 = os.path.join(_base_dir, "backend", "chroma_data", "Standards")  # Local development structure
 
-# Use whichever path exists, fallback to candidate 1 (Docker/production)
+# Use whichever path exists, fallback to candidate 1 (Production)
 if os.path.isdir(_standards_candidate_2) and os.path.exists(os.path.join(_standards_candidate_2, "instrumentation_safety_standards.docx")):
     STANDARDS_DOCX_DIR = _standards_candidate_2
     _standards_path_msg = f"[INIT] Standards path (local dev): {STANDARDS_DOCX_DIR}"
 elif os.path.isdir(_standards_candidate_1) and os.path.exists(os.path.join(_standards_candidate_1, "instrumentation_safety_standards.docx")):
     STANDARDS_DOCX_DIR = _standards_candidate_1
-    _standards_path_msg = f"[INIT] Standards path (docker/prod): {STANDARDS_DOCX_DIR}"
+    _standards_path_msg = f"[INIT] Standards path (production): {STANDARDS_DOCX_DIR}"
 else:
     STANDARDS_DOCX_DIR = _standards_candidate_1  # Default to candidate 1
     _standards_path_msg = f"[INIT] Standards path (default, may not exist): {STANDARDS_DOCX_DIR}"
@@ -1742,7 +1742,7 @@ def run_standards_deep_agent_batch(
 
                             if normalized_key not in existing_keys and value and str(value).lower() not in ["null", "none"]:
                                 standards_specs[key] = value
-                                combined_specs[key] = {"value": value, "source": "standards_iterative", "confidence": 0.7}
+                                combined_specs[key] = {"value": value, "source": "standards", "confidence": 0.7}
                                 item_info["existing_specs"][key] = value
                                 added_count += 1
 

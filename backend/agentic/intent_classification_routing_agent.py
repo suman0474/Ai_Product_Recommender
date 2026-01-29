@@ -23,6 +23,14 @@ from threading import Lock
 
 logger = logging.getLogger(__name__)
 
+# Level 4.5: Import WorkflowRegistry for registry-based matching
+try:
+    from .workflow_registry import get_workflow_registry, WorkflowRegistry
+    _REGISTRY_AVAILABLE = True
+except ImportError:
+    _REGISTRY_AVAILABLE = False
+    logger.debug("[Router] WorkflowRegistry not available - using IntentConfig fallback")
+
 
 # =============================================================================
 # WORKFLOW STATE MEMORY (Session-based memory for workflow locking)
@@ -30,16 +38,17 @@ logger = logging.getLogger(__name__)
 
 class WorkflowStateMemory:
     """
-    Singleton memory class to track workflow state per session.
+    CACHE for workflow state from frontend SessionManager.
     
-    This is the SINGLE SOURCE OF TRUTH for workflow state - stored entirely
-    in the backend, not dependent on frontend state.
+    ARCHITECTURE: Frontend SessionManager is the SOURCE OF TRUTH.
+    This class only:
+    - Caches workflow hints from frontend for the current request
+    - Validates hints against known workflows  
+    - Clears state ONLY on explicit exit detection
+    - Does NOT make independent workflow decisions
     
-    Usage:
-        memory = WorkflowStateMemory()
-        memory.set_workflow("session_123", "engenie_chat")
-        current = memory.get_workflow("session_123")  # Returns "engenie_chat"
-        memory.clear_workflow("session_123")
+    The response contains target_workflow which frontend uses to update
+    SessionManager. Frontend then passes workflow_hint on next request.
     """
     
     _instance = None
@@ -142,7 +151,7 @@ class WorkflowTarget(Enum):
     """Available workflow routing targets."""
     SOLUTION_WORKFLOW = "solution"              # Complex systems, multiple instruments
     INSTRUMENT_IDENTIFIER = "instrument_identifier"  # Single product requirements
-    PRODUCT_INFO = "product_info"               # Questions, greetings, confirmations
+    ENGENIE_CHAT = "engenie_chat"               # Questions, greetings, RAG queries
     OUT_OF_DOMAIN = "out_of_domain"             # Unrelated queries
 
 
@@ -234,17 +243,17 @@ class IntentConfig:
         "spec_request": WorkflowTarget.INSTRUMENT_IDENTIFIER,
 
         # Product Info Workflow - Knowledge, confirmations, standards, vendor info
-        "question": WorkflowTarget.PRODUCT_INFO,
-        "productinfo": WorkflowTarget.PRODUCT_INFO,
-        "product_info": WorkflowTarget.PRODUCT_INFO,
-        "greeting": WorkflowTarget.PRODUCT_INFO,
-        "confirm": WorkflowTarget.PRODUCT_INFO,
-        "reject": WorkflowTarget.PRODUCT_INFO,
-        "standards": WorkflowTarget.PRODUCT_INFO,
-        "vendor_strategy": WorkflowTarget.PRODUCT_INFO,
-        "grounded_chat": WorkflowTarget.PRODUCT_INFO,
-        "comparison": WorkflowTarget.PRODUCT_INFO,
-        "productcomparison": WorkflowTarget.PRODUCT_INFO,
+        "question": WorkflowTarget.ENGENIE_CHAT,
+        "productinfo": WorkflowTarget.ENGENIE_CHAT,
+        "product_info": WorkflowTarget.ENGENIE_CHAT,
+        "greeting": WorkflowTarget.ENGENIE_CHAT,
+        "confirm": WorkflowTarget.ENGENIE_CHAT,
+        "reject": WorkflowTarget.ENGENIE_CHAT,
+        "standards": WorkflowTarget.ENGENIE_CHAT,
+        "vendor_strategy": WorkflowTarget.ENGENIE_CHAT,
+        "grounded_chat": WorkflowTarget.ENGENIE_CHAT,
+        "comparison": WorkflowTarget.ENGENIE_CHAT,
+        "productcomparison": WorkflowTarget.ENGENIE_CHAT,
 
         # Out of Domain - Unrelated to industrial automation
         "chitchat": WorkflowTarget.OUT_OF_DOMAIN,
@@ -265,7 +274,7 @@ class IntentConfig:
         ROUTING LOGIC (in priority order):
         1. If intent is in SOLUTION_FORCING_INTENTS → SOLUTION_WORKFLOW
         2. If is_solution=True → SOLUTION_WORKFLOW (override via flag)
-        3. Otherwise → Use intent mapping (default: PRODUCT_INFO for unknown)
+        3. Otherwise → Use intent mapping (default: ENGENIE_CHAT for unknown)
 
         Args:
             intent: Intent classification string from LLM or rule-based classifier
@@ -277,7 +286,7 @@ class IntentConfig:
         Examples:
             get_workflow("solution", is_solution=False) → SOLUTION_WORKFLOW
             get_workflow("question", is_solution=True) → SOLUTION_WORKFLOW
-            get_workflow("unknown_intent", is_solution=False) → PRODUCT_INFO
+            get_workflow("unknown_intent", is_solution=False) → ENGENIE_CHAT
         """
         intent_lower = intent.lower().strip() if intent else "unrelated"
 
@@ -291,8 +300,8 @@ class IntentConfig:
             logger.debug(f"[IntentConfig] is_solution flag set, routing to SOLUTION")
             return WorkflowTarget.SOLUTION_WORKFLOW
 
-        # Priority 3: Use intent mapping (defaults to PRODUCT_INFO for unknowns)
-        workflow = cls.INTENT_MAPPINGS.get(intent_lower, WorkflowTarget.PRODUCT_INFO)
+        # Priority 3: Use intent mapping (defaults to ENGENIE_CHAT for unknowns)
+        workflow = cls.INTENT_MAPPINGS.get(intent_lower, WorkflowTarget.ENGENIE_CHAT)
         logger.debug(f"[IntentConfig] Intent '{intent_lower}' → {workflow.value}")
         return workflow
 
@@ -346,13 +355,75 @@ class IntentClassificationRoutingAgent:
     - chitchat, unrelated → OUT_OF_DOMAIN (reject)
     """
 
-    def __init__(self, name: str = "WorkflowRouter"):
-        """Initialize the agent."""
+    def __init__(self, name: str = "WorkflowRouter", use_registry: bool = True):
+        """Initialize the agent.
+        
+        Args:
+            name: Agent name for logging
+            use_registry: If True, use WorkflowRegistry for matching (Level 4.5).
+                         Falls back to IntentConfig if registry unavailable.
+        """
         self.name = name
         self.classification_count = 0
         self.last_classification_time_ms = 0.0
         self._memory = get_workflow_memory()  # Use singleton workflow memory
-        logger.info(f"[{self.name}] Initialized - Workflow Routing Agent with state memory")
+        self._use_registry = use_registry and _REGISTRY_AVAILABLE
+        
+        if self._use_registry:
+            self._registry = get_workflow_registry()
+            logger.info(f"[{self.name}] Initialized with WorkflowRegistry (Level 4.5)")
+        else:
+            self._registry = None
+            logger.info(f"[{self.name}] Initialized with IntentConfig fallback")
+
+    def _is_query_relevant_to_workflow(self, query: str, workflow: str) -> bool:
+        """
+        Check if query is relevant to the currently locked workflow.
+        
+        This prevents knowledge/question queries from being incorrectly routed
+        to SOLUTION workflow when session is locked.
+        
+        Args:
+            query: User query string
+            workflow: Currently locked workflow name
+            
+        Returns:
+            True if query is relevant to workflow, False if it should break the lock
+        """
+        query_lower = query.lower().strip()
+        
+        # Knowledge/question patterns that are NOT relevant to solution workflow
+        if workflow == "solution":
+            # Question starters - these are knowledge queries, not solution continuation
+            knowledge_patterns = [
+                "what is", "what are", "what's the", "what does",
+                "how does", "how do", "how is", "how are",
+                "explain", "tell me about", "describe",
+                "why is", "why does", "why do",
+                "can you explain", "can you tell",
+                "input current", "output range", "accuracy",
+                "specification", "specs of", "datasheet"
+            ]
+            
+            # Check for knowledge patterns
+            if any(query_lower.startswith(p) or f" {p}" in query_lower for p in knowledge_patterns):
+                logger.info(
+                    f"[{self.name}] Query not relevant to solution workflow "
+                    f"(knowledge pattern detected): '{query[:50]}...'"
+                )
+                return False
+            
+            # Solution-relevant patterns (should stay locked)
+            solution_relevant = [
+                "add", "include", "remove", "select", "confirm",
+                "i've selected", "use this", "continue", "proceed",
+                "next", "done", "finished", "submit"
+            ]
+            if any(p in query_lower for p in solution_relevant):
+                return True
+        
+        # Default: consider relevant to respect workflow lock
+        return True
 
     def classify(
         self, 
@@ -389,23 +460,41 @@ class IntentClassificationRoutingAgent:
             # Proceed to classify as a fresh query (likely resulting in Greeting or ProductInfo)
         
         # =====================================================================
-        # STEP 2: CHECK WORKFLOW LOCK
+        # STEP 2: HANDLE WORKFLOW HINT FROM FRONTEND
+        # =====================================================================
+        context = context or {}
+        workflow_hint = context.get('workflow_hint')
+        valid_workflows = {'engenie_chat', 'solution', 'instrument_identifier'}
+        
+        if workflow_hint and workflow_hint not in valid_workflows:
+            logger.warning(f"[{self.name}] Invalid workflow hint ignored: {workflow_hint}")
+            workflow_hint = None
+        
+        # =====================================================================
+        # STEP 3: CHECK WORKFLOW LOCK (with relevance check)
         # =====================================================================
         current_workflow = self._memory.get_workflow(session_id)
         
+        # If no backend state but valid hint from frontend, restore it
+        if not current_workflow and workflow_hint and not should_exit_workflow(query):
+            logger.info(f"[{self.name}] Restoring workflow from frontend hint: {workflow_hint}")
+            current_workflow = workflow_hint
+            self._memory.set_workflow(session_id, current_workflow)
+        
         if current_workflow and not should_exit_workflow(query):
-            # Session is LOCKED in a workflow - return that workflow
-            logger.info(f"[{self.name}] WORKFLOW LOCKED: Session in '{current_workflow}' - skipping classification")
+            # CONSOLIDATION: Frontend is authoritative - respect the workflow lock
+            # Don't check relevance - if frontend says we're in a workflow, we stay in it
+            logger.info(f"[{self.name}] WORKFLOW LOCKED: Session in '{current_workflow}' (frontend authoritative)")
             
             # Map workflow to target
             workflow_map = {
-                "engenie_chat": WorkflowTarget.PRODUCT_INFO,
-                "product_info": WorkflowTarget.PRODUCT_INFO,
+                "engenie_chat": WorkflowTarget.ENGENIE_CHAT,
+                "product_info": WorkflowTarget.ENGENIE_CHAT,
                 "instrument_identifier": WorkflowTarget.INSTRUMENT_IDENTIFIER,
                 "solution": WorkflowTarget.SOLUTION_WORKFLOW
             }
             
-            target_workflow = workflow_map.get(current_workflow, WorkflowTarget.PRODUCT_INFO)
+            target_workflow = workflow_map.get(current_workflow, WorkflowTarget.ENGENIE_CHAT)
             
             # Calculate time
             end_time = datetime.now()
@@ -416,7 +505,7 @@ class IntentClassificationRoutingAgent:
                 target_workflow=target_workflow,
                 intent="workflow_locked",
                 confidence=1.0,
-                reasoning=f"Session locked in {current_workflow} workflow",
+                reasoning=f"Session locked in {current_workflow} workflow (frontend authoritative)",
                 is_solution=(current_workflow == "solution"),
                 target_rag=None,
                 solution_indicators=[],
@@ -427,7 +516,92 @@ class IntentClassificationRoutingAgent:
             )
 
         # =====================================================================
-        # STEP 3: NORMAL CLASSIFICATION (no lock or exit requested)
+        # STEP 3: SEMANTIC CLASSIFICATION (PRIMARY - Embedding Similarity)
+        # =====================================================================
+        # Use semantic embeddings to classify intent based on similarity
+        # to pre-defined workflow signature patterns
+        
+        try:
+            from agentic.semantic_intent_classifier import (
+                get_semantic_classifier, 
+                WorkflowType,
+                ClassificationResult
+            )
+            
+            semantic_classifier = get_semantic_classifier()
+            semantic_result = semantic_classifier.classify(query)
+            
+            logger.info(
+                f"[{self.name}] SEMANTIC: {semantic_result.workflow.value} "
+                f"(conf={semantic_result.confidence:.3f}, match='{semantic_result.matched_signature[:50]}...')"
+            )
+            
+            # High confidence semantic match - use directly
+            # Use 0.70 threshold to capture simple product requests that should go to EnGenie
+            if semantic_result.confidence >= 0.70:
+                # Map semantic workflow to target
+                semantic_workflow_map = {
+                    WorkflowType.ENGENIE_CHAT: WorkflowTarget.ENGENIE_CHAT,
+                    WorkflowType.SOLUTION_WORKFLOW: WorkflowTarget.SOLUTION_WORKFLOW,
+                    WorkflowType.INSTRUMENT_IDENTIFIER: WorkflowTarget.INSTRUMENT_IDENTIFIER
+                }
+                target_workflow = semantic_workflow_map.get(
+                    semantic_result.workflow, 
+                    WorkflowTarget.ENGENIE_CHAT
+                )
+                is_solution = (semantic_result.workflow == WorkflowType.SOLUTION_WORKFLOW)
+                
+                # Set target RAG for EnGenie Chat
+                target_rag = None
+                if target_workflow == WorkflowTarget.ENGENIE_CHAT:
+                    target_rag = "product_info_rag"
+                
+                # Set workflow state
+                workflow_name = {
+                    WorkflowTarget.ENGENIE_CHAT: "engenie_chat",
+                    WorkflowTarget.INSTRUMENT_IDENTIFIER: "instrument_identifier",
+                    WorkflowTarget.SOLUTION_WORKFLOW: "solution"
+                }.get(target_workflow)
+                
+                # CONSOLIDATION: Don't set backend state here
+                # Frontend receives target_workflow in response and updates SessionManager
+                # Frontend then passes workflow_hint on next request
+                logger.debug(f"[{self.name}] SEMANTIC: Target workflow: {workflow_name} (frontend will store)")
+                
+                end_time = datetime.now()
+                classification_time_ms = (end_time - start_time).total_seconds() * 1000
+                
+                return WorkflowRoutingResult(
+                    query=query,
+                    target_workflow=target_workflow,
+                    intent="semantic_match",
+                    confidence=semantic_result.confidence,
+                    reasoning=f"Semantic classification: {semantic_result.reasoning}",
+                    is_solution=is_solution,
+                    target_rag=target_rag,
+                    solution_indicators=["semantic_match"] if is_solution else [],
+                    extracted_info={
+                        "semantic_classification": True,
+                        "matched_signature": semantic_result.matched_signature,
+                        "all_scores": semantic_result.all_scores
+                    },
+                    classification_time_ms=classification_time_ms,
+                    timestamp=datetime.now().isoformat(),
+                    reject_message=None
+                )
+            else:
+                logger.info(
+                    f"[{self.name}] SEMANTIC: Low confidence ({semantic_result.confidence:.3f}), "
+                    f"falling back to rule-based classification"
+                )
+                
+        except ImportError as e:
+            logger.warning(f"[{self.name}] Semantic classifier not available: {e}")
+        except Exception as e:
+            logger.warning(f"[{self.name}] Semantic classification failed: {e}, using fallback")
+
+        # =====================================================================
+        # STEP 4: RULE-BASED CLASSIFICATION (FALLBACK)
         # =====================================================================
         
         # Import classify_intent_tool here to avoid circular imports
@@ -459,17 +633,103 @@ class IntentClassificationRoutingAgent:
         solution_indicators = intent_result.get("solution_indicators", [])
         extracted_info = intent_result.get("extracted_info", {})
 
-        # PHASE 1 FIX: Validate intent and route using centralized IntentConfig
-        if not IntentConfig.is_known_intent(intent):
-            logger.warning(
-                f"[{self.name}] Unknown intent '{intent}' from classifier. "
-                f"Valid intents: {IntentConfig.get_all_valid_intents()[:5]}... "
-                f"Mapping to 'unrelated'"
-            )
-            intent = "unrelated"
+        # =================================================================
+        # PHASE 3 FIX: Semantic validation before solution routing
+        # =================================================================
+        # If is_solution is True, verify with semantic classifier that this
+        # is actually a design/build request, not a knowledge query
+        if is_solution:
+            try:
+                from agentic.engenie_chat.engenie_chat_intent_agent import classify_query, DataSource
+                semantic_source, semantic_conf, semantic_reason = classify_query(query, use_semantic_llm=False)
+                
+                rag_sources = {DataSource.INDEX_RAG, DataSource.STANDARDS_RAG, DataSource.STRATEGY_RAG, DataSource.DEEP_AGENT}
+                
+                if semantic_source in rag_sources and semantic_conf >= 0.7:
+                    # Override: This is a RAG query, not a solution request
+                    logger.info(
+                        f"[{self.name}] PHASE 3 OVERRIDE: is_solution=True overridden to False. "
+                        f"Semantic analysis: {semantic_source.value} (conf={semantic_conf:.2f})"
+                    )
+                    is_solution = False
+                    solution_indicators = []
+                    extracted_info["semantic_override"] = {
+                        "original_is_solution": True,
+                        "overridden_to": False,
+                        "semantic_source": semantic_source.value,
+                        "semantic_confidence": semantic_conf,
+                        "reason": semantic_reason
+                    }
+                    # Also update intent to match semantic classification
+                    if semantic_source == DataSource.STANDARDS_RAG:
+                        intent = "standards"
+                    elif semantic_source == DataSource.STRATEGY_RAG:
+                        intent = "vendor_strategy"
+                    else:
+                        intent = "question"
+                        
+            except ImportError:
+                logger.debug(f"[{self.name}] Semantic classifier not available for validation")
+            except Exception as e:
+                logger.warning(f"[{self.name}] Semantic validation failed: {e}")
 
-        # PHASE 1 FIX: Use centralized routing logic (replaces hardcoded mapping + override)
-        target_workflow = IntentConfig.get_workflow(intent, is_solution)
+        # =================================================================
+        # LEVEL 4.5: Registry-based workflow matching with fallback
+        # =================================================================
+        registry_match = None
+        
+        if self._use_registry and self._registry:
+            try:
+                # Use registry for intent matching
+                registry_match = self._registry.match_intent(
+                    intent=intent,
+                    is_solution=is_solution,
+                    confidence=confidence
+                )
+                
+                if registry_match.workflow:
+                    # Map registry workflow name to WorkflowTarget enum
+                    workflow_name_to_target = {
+                        "solution": WorkflowTarget.SOLUTION_WORKFLOW,
+                        "instrument_identifier": WorkflowTarget.INSTRUMENT_IDENTIFIER,
+                        "product_info": WorkflowTarget.ENGENIE_CHAT,
+                        "engenie_chat": WorkflowTarget.ENGENIE_CHAT  # EnGenie Chat maps to ProductInfo target
+                    }
+                    target_workflow = workflow_name_to_target.get(
+                        registry_match.workflow.name, 
+                        WorkflowTarget.ENGENIE_CHAT
+                    )
+                    logger.info(
+                        f"[{self.name}] Registry match: {registry_match.workflow.name} "
+                        f"(confidence={registry_match.confidence:.2f})"
+                    )
+                    
+                    # Check if disambiguation is needed
+                    if registry_match.needs_disambiguation:
+                        logger.info(
+                            f"[{self.name}] Low confidence match - disambiguation suggested: "
+                            f"{registry_match.disambiguation_question}"
+                        )
+                        extracted_info["needs_disambiguation"] = True
+                        extracted_info["disambiguation_question"] = registry_match.disambiguation_question
+                else:
+                    # No registry match - fall back to IntentConfig
+                    logger.debug(f"[{self.name}] No registry match, using IntentConfig fallback")
+                    target_workflow = IntentConfig.get_workflow(intent, is_solution)
+                    
+            except Exception as e:
+                logger.warning(f"[{self.name}] Registry matching failed: {e}, using IntentConfig")
+                target_workflow = IntentConfig.get_workflow(intent, is_solution)
+        else:
+            # FALLBACK: Use IntentConfig (Level 3 behavior)
+            if not IntentConfig.is_known_intent(intent):
+                logger.warning(
+                    f"[{self.name}] Unknown intent '{intent}' from classifier. "
+                    f"Valid intents: {IntentConfig.get_all_valid_intents()[:5]}... "
+                    f"Mapping to 'unrelated'"
+                )
+                intent = "unrelated"
+            target_workflow = IntentConfig.get_workflow(intent, is_solution)
 
         # Log the routing decision
         if is_solution or intent in IntentConfig.SOLUTION_FORCING_INTENTS:
@@ -480,7 +740,7 @@ class IntentClassificationRoutingAgent:
 
         # Determine Target RAG for Product Info
         target_rag = None
-        if target_workflow == WorkflowTarget.PRODUCT_INFO:
+        if target_workflow == WorkflowTarget.ENGENIE_CHAT:
             if intent == "standards":
                 target_rag = "standards_rag"
             elif intent == "vendor_strategy":
@@ -500,14 +760,16 @@ class IntentClassificationRoutingAgent:
         # STEP 4: SET WORKFLOW STATE FOR SESSION
         # =====================================================================
         workflow_name = {
-            WorkflowTarget.PRODUCT_INFO: "engenie_chat",
+            WorkflowTarget.ENGENIE_CHAT: "engenie_chat",
             WorkflowTarget.INSTRUMENT_IDENTIFIER: "instrument_identifier",
             WorkflowTarget.SOLUTION_WORKFLOW: "solution"
         }.get(target_workflow)
         
+        # CONSOLIDATION: Don't set backend state here
+        # Frontend receives target_workflow in response and updates SessionManager
+        # Frontend then passes workflow_hint on next request
         if workflow_name:
-            self._memory.set_workflow(session_id, workflow_name)
-            logger.info(f"[{self.name}] Workflow state set: {workflow_name}")
+            logger.debug(f"[{self.name}] Target workflow: {workflow_name} (frontend will store)")
 
         # Prepare reject message for out-of-domain
         # reject_message logic handled above
@@ -554,7 +816,7 @@ class IntentClassificationRoutingAgent:
         elif target_workflow == WorkflowTarget.INSTRUMENT_IDENTIFIER:
             return "Single product requirements detected"
 
-        elif target_workflow == WorkflowTarget.PRODUCT_INFO:
+        elif target_workflow == WorkflowTarget.ENGENIE_CHAT:
             if intent == "greeting":
                 return "Greeting detected"
             elif intent == "confirm":
@@ -594,11 +856,19 @@ class IntentClassificationRoutingAgent:
 
     def get_stats(self) -> Dict:
         """Get agent statistics."""
-        return {
+        stats = {
             "name": self.name,
             "classification_count": self.classification_count,
-            "last_classification_time_ms": self.last_classification_time_ms
+            "last_classification_time_ms": self.last_classification_time_ms,
+            "using_registry": self._use_registry,
+            "memory_stats": self._memory.get_stats()
         }
+        
+        # Add registry stats if available
+        if self._use_registry and self._registry:
+            stats["registry_stats"] = self._registry.get_stats()
+        
+        return stats
 
 
 # =============================================================================

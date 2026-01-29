@@ -108,6 +108,64 @@ from .rag_components import (
     create_strategy_filter
 )
 
+# ============================================================================
+# RAG UTILITIES (NEW - Phase 1 & 2 Gap Fixes)
+# ============================================================================
+from .fast_fail import (
+    should_fail_fast,
+    check_and_set_fast_fail,
+    is_retryable_error,
+    log_fast_fail
+)
+
+from .circuit_breaker import (
+    CircuitBreaker,
+    CircuitState,
+    CircuitOpenError,
+    get_circuit_breaker,
+    get_all_circuit_states,
+    reset_all_circuits,
+    circuit_protected
+)
+
+from .rag_cache import (
+    RAGCache,
+    get_rag_cache,
+    cache_get,
+    cache_set,
+    cache_stats
+)
+
+from .rate_limiter import (
+    RateLimiter,
+    RateLimitExceededError,
+    get_rate_limiter,
+    acquire_for_service,
+    get_all_limiter_stats,
+    init_default_limiters,
+    rate_limited
+)
+
+from .rag_logger import (
+    RAGLogger,
+    IndexRAGLogger,
+    StandardsRAGLogger,
+    StrategyRAGLogger,
+    OrchestratorLogger,
+    set_trace_id,
+    get_trace_id,
+    clear_trace_id,
+    get_rag_logger,
+    log_node_timing
+)
+
+from .input_sanitizer import (
+    sanitize_query,
+    validate_query,
+    sanitize_session_id,
+    extract_safe_keywords
+)
+
 # Strategy RAG (TRUE RAG with vector store)
 from .strategy_rag.strategy_chat_agent import (
     StrategyChatAgent,
@@ -183,6 +241,22 @@ from .instrument_identifier_workflow import (
 from .potential_product_index import (
     create_potential_product_index_workflow,
     run_potential_product_index_workflow
+)
+
+# ============================================================================
+# WORKFLOW REGISTRY (Level 4.5 + Level 5)
+# ============================================================================
+from .workflow_registry import (
+    WorkflowRegistry,
+    WorkflowMetadata,
+    MatchResult,
+    RetryPolicy,
+    RetryStrategy,
+    GuardrailResult,
+    GuardrailStatus,
+    Experiment,
+    get_workflow_registry,
+    workflow as workflow_decorator
 )
 
 # ============================================================================
@@ -379,6 +453,56 @@ __all__ = [
     'create_rag_aggregator',
     'create_strategy_filter',
     
+    # ==================== RAG UTILITIES (NEW) ====================
+    # Fast Fail
+    'should_fail_fast',
+    'check_and_set_fast_fail',
+    'is_retryable_error',
+    'log_fast_fail',
+    
+    # Circuit Breaker
+    'CircuitBreaker',
+    'CircuitState',
+    'CircuitOpenError',
+    'get_circuit_breaker',
+    'get_all_circuit_states',
+    'reset_all_circuits',
+    'circuit_protected',
+    
+    # RAG Cache
+    'RAGCache',
+    'get_rag_cache',
+    'cache_get',
+    'cache_set',
+    'cache_stats',
+    
+    # Rate Limiter
+    'RateLimiter',
+    'RateLimitExceededError',
+    'get_rate_limiter',
+    'acquire_for_service',
+    'get_all_limiter_stats',
+    'init_default_limiters',
+    'rate_limited',
+    
+    # RAG Logger
+    'RAGLogger',
+    'IndexRAGLogger',
+    'StandardsRAGLogger',
+    'StrategyRAGLogger',
+    'OrchestratorLogger',
+    'set_trace_id',
+    'get_trace_id',
+    'clear_trace_id',
+    'get_rag_logger',
+    'log_node_timing',
+    
+    # Input Sanitizer
+    'sanitize_query',
+    'validate_query',
+    'sanitize_session_id',
+    'extract_safe_keywords',
+    
     # Strategy RAG (TRUE RAG with vector store)
     'StrategyChatAgent',
     'create_strategy_chat_agent',
@@ -417,6 +541,18 @@ __all__ = [
 
     'create_potential_product_index_workflow',
     'run_potential_product_index_workflow',
+
+    # ==================== WORKFLOW REGISTRY (Level 4.5 + Level 5) ====================
+    'WorkflowRegistry',
+    'WorkflowMetadata',
+    'MatchResult',
+    'RetryPolicy',
+    'RetryStrategy',
+    'GuardrailResult',
+    'GuardrailStatus',
+    'Experiment',
+    'get_workflow_registry',
+    'workflow_decorator',
 
     # ==================== SPEC OBJECT MODELS ====================
     'SpecObject',

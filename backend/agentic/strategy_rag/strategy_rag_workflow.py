@@ -32,6 +32,15 @@ from .strategy_csv_filter import (
     get_strategy_filter
 )
 
+# Import new utility modules for Phase 1 & 2 gap fixes
+try:
+    from ..fast_fail import should_fail_fast, check_and_set_fast_fail
+    from ..rag_cache import cache_get, cache_set
+    from ..rag_logger import StrategyRAGLogger, set_trace_id
+    UTILITIES_AVAILABLE = True
+except ImportError:
+    UTILITIES_AVAILABLE = False
+
 logger = logging.getLogger(__name__)
 
 

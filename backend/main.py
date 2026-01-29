@@ -109,7 +109,6 @@ else:
     app.config["SESSION_TYPE"] = "filesystem" 
 
 # Use absolute path for database to ensure it's created in the persisted 'instance' directory
-# mirroring the docker volume mount: - backend-instance:/app/instance
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///' + os.path.join(app.instance_path, 'users.db')
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.secret_key = os.getenv('SECRET_KEY', 'fallback-secret-key-for-development')
@@ -439,7 +438,7 @@ def api_intent():
         target_to_intent = {
             WorkflowTarget.SOLUTION_WORKFLOW: "solution",
             WorkflowTarget.INSTRUMENT_IDENTIFIER: "productRequirements",
-            WorkflowTarget.PRODUCT_INFO: "knowledgeQuestion",
+            WorkflowTarget.ENGENIE_CHAT: "knowledgeQuestion",
             WorkflowTarget.OUT_OF_DOMAIN: "other"
         }
 
@@ -468,7 +467,7 @@ def api_intent():
         target_to_next_step = {
             WorkflowTarget.SOLUTION_WORKFLOW: "solutionWorkflow",
             WorkflowTarget.INSTRUMENT_IDENTIFIER: "initialInput",
-            WorkflowTarget.PRODUCT_INFO: None,  # EnGenie Chat handles its own routing
+            WorkflowTarget.ENGENIE_CHAT: None,  # EnGenie Chat handles its own routing
             WorkflowTarget.OUT_OF_DOMAIN: None
         }
 
@@ -481,7 +480,7 @@ def api_intent():
         target_to_workflow_name = {
             WorkflowTarget.SOLUTION_WORKFLOW: "solution",
             WorkflowTarget.INSTRUMENT_IDENTIFIER: "instrument_identifier",
-            WorkflowTarget.PRODUCT_INFO: "engenie_chat",
+            WorkflowTarget.ENGENIE_CHAT: "engenie_chat",
             WorkflowTarget.OUT_OF_DOMAIN: None
         }
 
@@ -503,7 +502,7 @@ def api_intent():
 
         # Build suggestion for knowledge questions (don't auto-route)
         suggest_workflow = None
-        if routing_result.target_workflow == WorkflowTarget.PRODUCT_INFO and not is_workflow_locked:
+        if routing_result.target_workflow == WorkflowTarget.ENGENIE_CHAT and not is_workflow_locked:
             suggest_workflow = {
                 "name": "EnGenie Chat",
                 "workflow_id": "engenie_chat",
@@ -925,6 +924,72 @@ def get_generic_image_fast(product_type):
             "reason": "error",
             "error": str(e)
         }), 200  # Return 200 so frontend doesn't show error
+
+
+@app.route('/api/generic_image/regenerate/<product_type>', methods=['POST'])
+@login_required
+def regenerate_generic_image_endpoint(product_type):
+    """
+    Force regeneration of a generic product image using LLM.
+    
+    Called by UI when initial image fetch failed and user wants to retry.
+    Includes rate limiting:
+    - 30 second cooldown between attempts per product type
+    - Maximum 3 attempts per hour per product type
+    
+    Args:
+        product_type: URL-encoded product type name
+        
+    Returns:
+        {
+            "success": true/false,
+            "image": {...} or null,
+            "product_type": "...",
+            "wait_seconds": int (if rate limited)
+        }
+    """
+    try:
+        from generic_image_utils import regenerate_generic_image
+        import urllib.parse
+        
+        decoded_product_type = urllib.parse.unquote(product_type)
+        logging.info(f"[API_REGEN] Regeneration request: {decoded_product_type}")
+        
+        result = regenerate_generic_image(decoded_product_type)
+        
+        if result.get('success'):
+            logging.info(f"[API_REGEN] ✓ Regeneration successful for: {decoded_product_type}")
+            return jsonify({
+                "success": True,
+                "image": result,
+                "product_type": decoded_product_type
+            }), 200
+        else:
+            reason = result.get('reason', 'failed')
+            wait_seconds = result.get('wait_seconds', 0)
+            message = result.get('message', 'Image generation failed')
+            
+            logging.warning(f"[API_REGEN] ✗ Regeneration failed for {decoded_product_type}: {reason}")
+            
+            # Return 429 for rate limiting, 500 for other failures
+            status_code = 429 if reason == 'rate_limited' else 500
+            
+            return jsonify({
+                "success": False,
+                "error": message,
+                "reason": reason,
+                "product_type": decoded_product_type,
+                "wait_seconds": wait_seconds
+            }), status_code
+            
+    except Exception as e:
+        logging.exception(f"[API_REGEN] Error: {e}")
+        return jsonify({
+            "success": False,
+            "error": str(e),
+            "reason": "error",
+            "product_type": product_type
+        }), 500
 
 
 @app.route('/api/generic_images/batch', methods=['POST'])

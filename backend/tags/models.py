@@ -45,7 +45,7 @@ class IntentType(str, Enum):
     Example: "Need a pressure transmitter for crude oil, SIL2, 0-500 psi."
     """
 
-    PRODUCT_INFO = "product_info"
+    ENGENIE_CHAT = "engenie_chat"
     """
     User is asking for information about an existing product (knowledge chat),
     usually grounded on product index.
@@ -170,7 +170,7 @@ class ResponseTags(BaseModel):
     intent_type: IntentType = Field(
         description=(
             "User intent classification. One of: solution, product_search, "
-            "product_info, chat, invalid"
+            "ENGENIE_CHAT, chat, invalid"
         )
     )
 
@@ -357,7 +357,7 @@ def create_chat_tags(
     Convenience function to create tags for chat/knowledge workflows.
 
     Args:
-        intent_type: Either CHAT or PRODUCT_INFO
+        intent_type: Either CHAT or ENGENIE_CHAT
         is_complete: Whether the answer is complete
 
     Returns:

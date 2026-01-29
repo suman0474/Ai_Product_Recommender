@@ -1,40 +1,28 @@
-# ============================================================================
-# AI Product Recommender - Docker Compose Configuration
-# ============================================================================
-# Production-ready multi-service deployment
-#
-# Usage:
-#   docker-compose up -d                 # Start all services
-#   docker-compose up -d --build         # Rebuild and start
-#   docker-compose logs -f               # View logs
-#   docker-compose down                  # Stop all services
-#   docker-compose down -v               # Stop and remove volumes
-#
-# ============================================================================
+# =============================================================================
+# AIPR - Docker Compose Configuration
+# =============================================================================
+# Production-ready multi-service orchestration
 
 services:
-  # ==========================================================================
-  # Frontend - React/Vite served by Nginx
-  # ==========================================================================
+  # ===========================================================================
+  # Frontend - React/Vite SPA served by Nginx
+  # ===========================================================================
   frontend:
     build:
       context: ./EnGenie
       dockerfile: Dockerfile
       args:
-        VITE_API_URL: "/api"
-        VITE_ENV: "production"
-    image: aipr-frontend:latest
+        VITE_API_URL: /api
+        VITE_ENV: production
     container_name: aipr-frontend
-    restart: unless-stopped
     ports:
       - "80:80"
     depends_on:
       backend:
         condition: service_healthy
-    environment:
-      - TZ=UTC
     networks:
       - aipr-network
+    restart: unless-stopped
     healthcheck:
       test: [ "CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:80/health" ]
       interval: 30s
@@ -42,118 +30,87 @@ services:
       retries: 3
       start_period: 10s
 
-  # ==========================================================================
-  # Backend - Flask/Gunicorn API Server
-  # ==========================================================================
+  # ===========================================================================
+  # Backend - Flask API with Gunicorn
+  # ===========================================================================
   backend:
     build:
       context: ./backend
       dockerfile: Dockerfile
-    image: aipr-backend:latest
     container_name: aipr-backend
-    restart: unless-stopped
-    ports:
-      - "5000:5000"
+    expose:
+      - "5000"
+    env_file:
+      - .env.docker
     environment:
-      # Flask settings
+      # Override specific settings for Docker
       - FLASK_ENV=production
-      - SECRET_KEY=${SECRET_KEY:-your-secret-key-change-in-production}
-
-      # Gunicorn settings
-      - GUNICORN_WORKERS=2
+      - GUNICORN_WORKERS=4
       - GUNICORN_THREADS=4
       - GUNICORN_TIMEOUT=3600
-      - GUNICORN_LOG_LEVEL=info
-
-      # Vector Store Configuration
-      - VECTOR_STORE_TYPE=${VECTOR_STORE_TYPE:-faiss}
-      - VECTOR_STORE_DIR=/app/vector_store_data
-
-      # ChromaDB (if using chromadb)
+      - GUNICORN_BIND=0.0.0.0:5000
+      # ChromaDB HTTP (if using chromadb container)
       - CHROMADB_HOST=chromadb
       - CHROMADB_PORT=8000
-
-      # Google API (required)
-      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
-
-      # OpenAI (optional)
-      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
-
-      # Search APIs
-      - SERPAPI_KEY=${SERPAPI_KEY:-}
-      - SERPER_API_KEY=${SERPER_API_KEY:-}
-
-      # Azure Storage (optional)
-      - AZURE_STORAGE_CONNECTION_STRING=${AZURE_STORAGE_CONNECTION_STRING:-}
-      - AZURE_COSMOS_CONNECTION_STRING=${AZURE_COSMOS_CONNECTION_STRING:-}
-
-      # Rate limiting
-      - RATE_LIMIT_ENABLED=${RATE_LIMIT_ENABLED:-true}
-
-      # Timezone
-      - TZ=UTC
     volumes:
-      # Persistent data volumes
-      - backend-data:/app/data
-      - backend-vector-store:/app/vector_store_data
+      # Persist session data
       - flask-sessions:/app/flask_session
-      - backend-instance:/app/instance
+      # Persist vector store data
+      - vector-store-data:/app/vector_store_data
+      # Mount product specifications (read-only)
+      - ./backend/PRODUCT_SPECIFICATIONS:/app/PRODUCT_SPECIFICATIONS:ro
     networks:
       - aipr-network
+    restart: unless-stopped
     healthcheck:
-      test: [ "CMD", "curl", "-f", "http://localhost:5000/api/health" ]
+      test: [ "CMD", "curl", "--fail", "http://localhost:5000/health" ]
       interval: 30s
-      timeout: 30s
+      timeout: 10s
       retries: 3
       start_period: 60s
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+        reservations:
+          memory: 1G
 
-  # ==========================================================================
-  # ChromaDB - Vector Database (Optional - for chromadb mode)
-  # ==========================================================================
+  # ===========================================================================
+  # ChromaDB - Vector Store (Optional - Pinecone is primary)
+  # ===========================================================================
   chromadb:
     image: chromadb/chroma:latest
     container_name: aipr-chromadb
-    restart: unless-stopped
-    ports:
-      - "8000:8000"
-    environment:
-      - CHROMA_SERVER_HOST=0.0.0.0
-      - CHROMA_SERVER_HTTP_PORT=8000
-      - IS_PERSISTENT=TRUE
-      - PERSIST_DIRECTORY=/chroma/chroma
-      - ANONYMIZED_TELEMETRY=FALSE
+    expose:
+      - "8000"
     volumes:
       - chromadb-data:/chroma/chroma
     networks:
       - aipr-network
+    restart: unless-stopped
     healthcheck:
-      test: [ "CMD", "curl", "-f", "http://localhost:8000/api/v1/heartbeat" ]
+      test: [ "CMD", "curl", "--fail", "http://localhost:8000/api/v1/heartbeat" ]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 10s
     profiles:
-      - chromadb
+      - chromadb # Only starts with: docker-compose --profile chromadb up
 
-# ============================================================================
+# =============================================================================
 # Networks
-# ============================================================================
+# =============================================================================
 networks:
   aipr-network:
     driver: bridge
-    name: aipr-network
 
-# ============================================================================
+# =============================================================================
 # Volumes
-# ============================================================================
+# =============================================================================
 volumes:
-  backend-data:
-    name: aipr-backend-data
-  backend-vector-store:
-    name: aipr-backend-vector-store
   flask-sessions:
-    name: aipr-flask-sessions
-  backend-instance:
-    name: aipr-backend-instance
+    driver: local
+  vector-store-data:
+    driver: local
   chromadb-data:
-    name: aipr-chromadb-data
+    driver: local

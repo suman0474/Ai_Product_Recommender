@@ -1,0 +1,47 @@
+# =============================================================================
+# AIPR - Docker Compose Development Overrides
+# =============================================================================
+# Use with: docker-compose -f docker-compose.yml -f docker-compose.override.yml up
+
+services:
+  # ===========================================================================
+  # Frontend - Development mode with hot reload
+  # ===========================================================================
+  frontend:
+    build:
+      args:
+        VITE_API_URL: http://localhost:5000
+        VITE_ENV: development
+    ports:
+      - "80:80"
+      - "3000:80" # Alternative port for development
+    volumes:
+      # Hot reload for static files (rebuild required for code changes)
+      - ./EnGenie/dist:/usr/share/nginx/html:ro
+
+  # ===========================================================================
+  # Backend - Development mode with debug
+  # ===========================================================================
+  backend:
+    ports:
+      - "5000:5000" # Expose backend directly for debugging
+    environment:
+      - FLASK_ENV=development
+      - GUNICORN_RELOAD=true
+      - GUNICORN_LOG_LEVEL=debug
+      - GUNICORN_WORKERS=2
+      - GUNICORN_THREADS=2
+    volumes:
+      # Mount source code for hot reload
+      - ./backend:/app:rw
+      # Exclude venv and caches
+      - /app/venv
+      - /app/__pycache__
+
+  # ===========================================================================
+  # ChromaDB - Always start in development
+  # ===========================================================================
+  chromadb:
+    profiles: [] # Remove profile restriction - always start in dev
+    ports:
+      - "8000:8000" # Expose for debugging

@@ -47,6 +47,24 @@ class AgenticConfig:
     # RAG Configuration
     RAG_TOP_K = int(os.getenv("RAG_TOP_K", "5"))
     RAG_SCORE_THRESHOLD = float(os.getenv("RAG_SCORE_THRESHOLD", "0.7"))
+    
+    # RAG Timeout Configuration (20 minutes = 1200 seconds for RAG operations)
+    RAG_TIMEOUT_SECONDS = int(os.getenv("RAG_TIMEOUT_SECONDS", "1200"))  # 20 min
+    ORCHESTRATOR_TIMEOUT_SECONDS = int(os.getenv("ORCHESTRATOR_TIMEOUT_SECONDS", "1200"))  # 20 min
+    LLM_TIMEOUT_SECONDS = int(os.getenv("LLM_TIMEOUT_SECONDS", "300"))  # 5 min
+    PINECONE_TIMEOUT_SECONDS = int(os.getenv("PINECONE_TIMEOUT_SECONDS", "60"))  # 1 min
+    
+    # Rate Limiting Configuration
+    LLM_CALLS_PER_MINUTE = int(os.getenv("LLM_CALLS_PER_MINUTE", "60"))
+    LLM_RATE_LIMIT_BURST = int(os.getenv("LLM_RATE_LIMIT_BURST", "15"))
+    
+    # RAG Cache Configuration
+    RAG_CACHE_TTL_SECONDS = int(os.getenv("RAG_CACHE_TTL_SECONDS", "300"))  # 5 min
+    RAG_CACHE_MAX_SIZE = int(os.getenv("RAG_CACHE_MAX_SIZE", "500"))
+    
+    # Circuit Breaker Configuration
+    CIRCUIT_BREAKER_THRESHOLD = int(os.getenv("CIRCUIT_BREAKER_THRESHOLD", "5"))
+    CIRCUIT_BREAKER_RESET_TIMEOUT = int(os.getenv("CIRCUIT_BREAKER_RESET_TIMEOUT", "60"))
 
     @classmethod
     def validate(cls):
@@ -106,4 +124,18 @@ class AgenticConfig:
         logger.info(f"ChromaDB Timeout: {cls.CHROMADB_TIMEOUT}s")
         logger.info(f"RAG Top K: {cls.RAG_TOP_K}")
         logger.info(f"RAG Score Threshold: {cls.RAG_SCORE_THRESHOLD}")
+        logger.info("-" * 60)
+        logger.info("RAG TIMEOUT & PERFORMANCE SETTINGS")
+        logger.info("-" * 60)
+        logger.info(f"RAG Timeout: {cls.RAG_TIMEOUT_SECONDS}s ({cls.RAG_TIMEOUT_SECONDS // 60} min)")
+        logger.info(f"Orchestrator Timeout: {cls.ORCHESTRATOR_TIMEOUT_SECONDS}s ({cls.ORCHESTRATOR_TIMEOUT_SECONDS // 60} min)")
+        logger.info(f"LLM Timeout: {cls.LLM_TIMEOUT_SECONDS}s")
+        logger.info(f"Pinecone Timeout: {cls.PINECONE_TIMEOUT_SECONDS}s")
+        logger.info(f"LLM Calls Per Minute: {cls.LLM_CALLS_PER_MINUTE}")
+        logger.info(f"LLM Rate Limit Burst: {cls.LLM_RATE_LIMIT_BURST}")
+        logger.info(f"RAG Cache TTL: {cls.RAG_CACHE_TTL_SECONDS}s")
+        logger.info(f"RAG Cache Max Size: {cls.RAG_CACHE_MAX_SIZE}")
+        logger.info(f"Circuit Breaker Threshold: {cls.CIRCUIT_BREAKER_THRESHOLD}")
+        logger.info(f"Circuit Breaker Reset Timeout: {cls.CIRCUIT_BREAKER_RESET_TIMEOUT}s")
         logger.info("=" * 60)
+

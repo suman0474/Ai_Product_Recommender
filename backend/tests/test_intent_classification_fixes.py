@@ -62,12 +62,12 @@ class TestIntentConfig:
     def test_intent_mapping(self):
         """Intent mappings should work correctly."""
         test_cases = {
-            "greeting": WorkflowTarget.PRODUCT_INFO,
-            "question": WorkflowTarget.PRODUCT_INFO,
+            "greeting": WorkflowTarget.ENGENIE_CHAT,
+            "question": WorkflowTarget.ENGENIE_CHAT,
             "requirements": WorkflowTarget.INSTRUMENT_IDENTIFIER,
             "additional_specs": WorkflowTarget.INSTRUMENT_IDENTIFIER,
-            "confirm": WorkflowTarget.PRODUCT_INFO,
-            "reject": WorkflowTarget.PRODUCT_INFO,
+            "confirm": WorkflowTarget.ENGENIE_CHAT,
+            "reject": WorkflowTarget.ENGENIE_CHAT,
             "chitchat": WorkflowTarget.OUT_OF_DOMAIN,
             "unrelated": WorkflowTarget.OUT_OF_DOMAIN,
         }
@@ -77,11 +77,11 @@ class TestIntentConfig:
             assert result == expected_workflow, \
                 f"Intent '{intent}' should map to {expected_workflow.value}, got {result.value}"
 
-    def test_unknown_intent_defaults_to_product_info(self):
-        """Unknown intents should default to PRODUCT_INFO for safety."""
+    def test_unknown_intent_defaults_to_ENGENIE_CHAT(self):
+        """Unknown intents should default to ENGENIE_CHAT for safety."""
         result = IntentConfig.get_workflow("unknown_intent_xyz", is_solution=False)
-        assert result == WorkflowTarget.PRODUCT_INFO, \
-            "Unknown intents should default to PRODUCT_INFO"
+        assert result == WorkflowTarget.ENGENIE_CHAT, \
+            "Unknown intents should default to ENGENIE_CHAT"
 
     def test_is_known_intent(self):
         """Intent validation should work correctly."""
@@ -96,12 +96,12 @@ class TestIntentConfig:
         """Intent matching should be case-insensitive."""
         assert IntentConfig.get_workflow("SOLUTION", is_solution=False) == WorkflowTarget.SOLUTION_WORKFLOW
         assert IntentConfig.get_workflow("Solution", is_solution=False) == WorkflowTarget.SOLUTION_WORKFLOW
-        assert IntentConfig.get_workflow("QUESTION", is_solution=False) == WorkflowTarget.PRODUCT_INFO
+        assert IntentConfig.get_workflow("QUESTION", is_solution=False) == WorkflowTarget.ENGENIE_CHAT
 
     def test_whitespace_handling(self):
         """Intent matching should handle leading/trailing whitespace."""
         assert IntentConfig.get_workflow("  solution  ", is_solution=False) == WorkflowTarget.SOLUTION_WORKFLOW
-        assert IntentConfig.get_workflow("\nquestion\n", is_solution=False) == WorkflowTarget.PRODUCT_INFO
+        assert IntentConfig.get_workflow("\nquestion\n", is_solution=False) == WorkflowTarget.ENGENIE_CHAT
 
 
 # =============================================================================
@@ -128,12 +128,13 @@ class TestRuleBasedClassification:
                     f"Simple request '{query}' should have is_solution=False"
 
     def test_complex_system_detection(self):
-        """Complex system requests should classify as 'solution' (PHASE 2 FIX)."""
+        """Complex system requests should classify as 'solution' (PHASE 3 FIX)."""
+        # PHASE 3: These queries contain explicit action verbs (designing, building)
+        # OR explicit multi-instrument phrases
         queries = [
             "I'm designing a complete temperature measurement system for a chemical reactor",
-            "I need a comprehensive solution with multiple instruments",
-            "Design a system with temperature, pressure, and level monitoring",
-            "Planning a plant with multiple measurement points"
+            "I'm building a monitoring system for my process",
+            "I need to design a system with multiple instruments"
         ]
 
         for query in queries:
@@ -145,11 +146,12 @@ class TestRuleBasedClassification:
                     f"Complex request '{query}' should have is_solution=True"
 
     def test_solution_phrase_detection(self):
-        """Explicit solution phrases should trigger solution classification (PHASE 2 FIX)."""
+        """Explicit solution phrases with ACTION verbs should trigger solution classification (PHASE 3 FIX)."""
+        # PHASE 3: These queries must contain ACTION verbs like "designing", "building", "implementing"
         queries = [
             "I'm designing a heating circuit with multiple zones",
             "I'm building a complete system for pressure monitoring",
-            "I need a complete solution for my process"
+            "I'm implementing a solution for my process"
         ]
 
         for query in queries:
@@ -198,6 +200,38 @@ class TestRuleBasedClassification:
             if result:  # If rule-based matched
                 assert result["intent"] == "question", \
                     f"Question '{question}' should be 'question'"
+
+    def test_knowledge_query_not_solution_phase3(self):
+        """PHASE 3 FIX: Knowledge queries with keywords like 'what is' should NOT be classified as solution."""
+        queries = [
+            "I need a complete explanation of pressure measurement systems",
+            "I need to understand how integrated solutions work",
+            "I want a full description of instrumentation packages"
+        ]
+
+        for query in queries:
+            result = _classify_rule_based(query)
+            if result:  # If rule-based matched
+                assert result["is_solution"] == False, \
+                    f"Knowledge query '{query}' should NOT have is_solution=True"
+                assert result["intent"] in ["question", "requirements"], \
+                    f"Knowledge query '{query}' should be 'question' or 'requirements', got '{result['intent']}'"
+
+    def test_rag_queries_not_solution_phase3(self):
+        """PHASE 3 FIX: Queries that semantically belong to RAG should NOT route to solution."""
+        # These queries might contain words like 'system' or 'solution' but are knowledge queries
+        queries = [
+            "I need information about complete measurement systems",
+            "Tell me about integrated control solutions",
+            "What is a complete instrumentation package?"
+        ]
+
+        for query in queries:
+            result = _classify_rule_based(query)
+            if result:  # If rule-based matched
+                # These should NOT be flagged as solution since they're asking FOR information
+                assert result["is_solution"] == False, \
+                    f"RAG query '{query}' should NOT have is_solution=True"
 
 
 # =============================================================================
@@ -264,7 +298,7 @@ class TestIntentClassificationRoutingAgent:
         agent = IntentClassificationRoutingAgent()
         # This test assumes the agent can handle an unknown intent
         # In real usage, the LLM should never return unknown intents
-        # But the agent should default to PRODUCT_INFO if it does
+        # But the agent should default to ENGENIE_CHAT if it does
         assert True  # Placeholder - full integration test needs mock LLM
 
     def test_workflow_locking(self):

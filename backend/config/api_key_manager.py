@@ -91,6 +91,12 @@ class APIKeyManager:
             keys.append(key)
             logger.debug("[APIKeyManager] Loaded GOOGLE_API_KEY")
 
+        # Load GOOGLE_API_KEY1 (supports both naming conventions)
+        key = os.getenv("GOOGLE_API_KEY1")
+        if key and key not in keys:  # Avoid duplicates
+            keys.append(key)
+            logger.debug("[APIKeyManager] Loaded GOOGLE_API_KEY1")
+
         # Load additional keys (GOOGLE_API_KEY2 through GOOGLE_API_KEY10)
         for i in range(2, 11):
             key = os.getenv(f"GOOGLE_API_KEY{i}")

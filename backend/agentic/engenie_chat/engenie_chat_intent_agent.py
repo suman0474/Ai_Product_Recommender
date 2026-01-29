@@ -12,8 +12,17 @@ Routes queries to EnGenie Chat page in frontend when relevant.
 
 import logging
 import re
+import json
 from typing import Dict, Tuple, List, Optional
 from enum import Enum
+
+# Import for LLM-based semantic classification
+try:
+    from llm_fallback import create_llm_with_fallback
+    from langchain_core.prompts import ChatPromptTemplate
+    LLM_AVAILABLE = True
+except ImportError:
+    LLM_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
 
@@ -314,20 +323,103 @@ HYBRID_PATTERNS = [
 
 
 # =============================================================================
+# SEMANTIC LLM CLASSIFICATION (For Uncertain Queries)
+# =============================================================================
+
+SEMANTIC_CLASSIFICATION_PROMPT = """You are an industrial instrumentation query classifier.
+
+Classify this query into ONE category:
+
+Query: {query}
+
+Categories:
+- INDEX_RAG: Product specifications, datasheets, models, vendors (Rosemount, Yokogawa, Siemens, etc.), technical specs, flowmeters, transmitters, valves
+- STANDARDS_RAG: Safety standards (SIL, ATEX, IECEx), certifications, compliance (IEC, ISO, API standards), hazardous area classifications
+- STRATEGY_RAG: Vendor selection, procurement strategy, approved/preferred suppliers, vendor priorities, forbidden vendors
+- DEEP_AGENT: Extract specific values from standards tables, clauses, annexes - detailed requirement extraction
+- HYBRID: Query clearly needs BOTH product info AND standards/strategy info (e.g., "Is Rosemount 3051 certified for SIL 3?")
+- LLM: General question not related to industrial instrumentation, or conversational/greeting
+
+Respond ONLY with valid JSON (no markdown):
+{{"category": "CATEGORY_NAME", "confidence": 0.7, "reasoning": "brief reason"}}
+"""
+
+
+def _classify_with_llm(query: str) -> Tuple[DataSource, float, str]:
+    """
+    Use LLM for semantic classification when keyword matching is uncertain.
+    
+    This provides more accurate classification for ambiguous queries like:
+    - "How do I maintain this transmitter?" (intent unclear from keywords)
+    - "What should I consider for hazardous areas?" (could be multiple sources)
+    
+    Returns:
+        Tuple of (DataSource, confidence, reasoning)
+    """
+    if not LLM_AVAILABLE:
+        logger.debug("[INTENT] LLM semantic classification unavailable")
+        return DataSource.LLM, 0.3, "LLM classification unavailable"
+    
+    try:
+        llm = create_llm_with_fallback(model="gemini-2.5-flash", temperature=0.1)
+        prompt = ChatPromptTemplate.from_template(SEMANTIC_CLASSIFICATION_PROMPT)
+        
+        response = (prompt | llm).invoke({"query": query})
+        response_text = response.content if hasattr(response, 'content') else str(response)
+        
+        # Clean up response (remove markdown if present)
+        response_text = response_text.strip()
+        if response_text.startswith("```"):
+            response_text = response_text.split("```")[1]
+            if response_text.startswith("json"):
+                response_text = response_text[4:]
+        response_text = response_text.strip()
+        
+        result = json.loads(response_text)
+        
+        category_map = {
+            "INDEX_RAG": DataSource.INDEX_RAG,
+            "STANDARDS_RAG": DataSource.STANDARDS_RAG,
+            "STRATEGY_RAG": DataSource.STRATEGY_RAG,
+            "DEEP_AGENT": DataSource.DEEP_AGENT,
+            "WEB_SEARCH": DataSource.WEB_SEARCH,
+            "HYBRID": DataSource.HYBRID,
+            "LLM": DataSource.LLM,
+        }
+        
+        category = result.get("category", "LLM").upper()
+        source = category_map.get(category, DataSource.LLM)
+        confidence = float(result.get("confidence", 0.7))
+        reasoning = result.get("reasoning", "LLM semantic classification")
+        
+        logger.info(f"[INTENT] LLM semantic classification: {source.value} (confidence: {confidence:.2f})")
+        return source, confidence, f"[LLM] {reasoning}"
+        
+    except json.JSONDecodeError as e:
+        logger.warning(f"[INTENT] LLM response not valid JSON: {e}")
+        return DataSource.LLM, 0.3, "LLM classification parse error"
+    except Exception as e:
+        logger.warning(f"[INTENT] LLM classification failed: {e}")
+        return DataSource.LLM, 0.3, f"LLM classification failed: {str(e)[:50]}"
+
+
+# =============================================================================
 # MAIN CLASSIFICATION FUNCTION
 # =============================================================================
 
-def classify_query(query: str) -> Tuple[DataSource, float, str]:
+def classify_query(query: str, use_semantic_llm: bool = True) -> Tuple[DataSource, float, str]:
     """
     Classify a query to determine the best data source.
 
     Uses a multi-stage classification approach:
     1. Pattern matching for strong structural indicators
     2. Keyword scoring with weights
-    3. Hybrid detection for multi-domain queries
+    3. LLM semantic classification (for uncertain queries)
+    4. Hybrid detection for multi-domain queries
 
     Args:
         query: User query string
+        use_semantic_llm: Whether to use LLM for uncertain queries (default: True)
 
     Returns:
         Tuple of (DataSource, confidence, reasoning)
@@ -344,7 +436,7 @@ def classify_query(query: str) -> Tuple[DataSource, float, str]:
     # Stage 2: Keyword-based scoring
     scores, matches = _calculate_keyword_scores(query_lower)
 
-    # Stage 3: Determine primary source
+    # Stage 3: Determine primary source from keywords
     primary_source = DataSource.LLM
     max_score = 0.0
 
@@ -360,7 +452,14 @@ def classify_query(query: str) -> Tuple[DataSource, float, str]:
     else:
         confidence = 0.3
 
-    # Stage 5: Check for hybrid queries
+    # Stage 5: LLM Semantic Classification for uncertain queries
+    # Use LLM when keyword matching has low confidence (max_score < 5.0)
+    LOW_CONFIDENCE_THRESHOLD = 5.0
+    if use_semantic_llm and max_score < LOW_CONFIDENCE_THRESHOLD:
+        logger.info(f"[INTENT] Low keyword confidence ({max_score:.1f} < {LOW_CONFIDENCE_THRESHOLD}), using LLM semantic classification")
+        return _classify_with_llm(query)
+
+    # Stage 6: Check for hybrid queries
     # Only consider hybrid if explicitly detected by pattern matching
     # Simple keyword overlap doesn't make a query hybrid
     hybrid_detected = _detect_hybrid_pattern(query_lower)

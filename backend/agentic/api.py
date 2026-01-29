@@ -212,15 +212,22 @@ def classify_route():
     
     data = request.get_json()
     query = data.get('query', '').strip()
-    context = data.get('context')
+    context = data.get('context') or {}
+    # CRITICAL: Get session_id for workflow state isolation between users
+    session_id = data.get('session_id') or data.get('search_session_id') or 'default'
+    
+    # Accept workflow hint from frontend (will be validated by agent)
+    workflow_hint = data.get('workflow_hint')
+    if workflow_hint:
+        context['workflow_hint'] = workflow_hint
     
     if not query:
         return api_response(False, error="query is required", status_code=400)
     
-    logger.info(f"[CLASSIFY_ROUTE] Classifying query: {query[:100]}...")
+    logger.info(f"[CLASSIFY_ROUTE] Query: {query[:100]}... (session: {session_id[:16]}, hint: {workflow_hint})")
     
     agent = IntentClassificationRoutingAgent()
-    result = agent.classify(query, context)
+    result = agent.classify(query, session_id=session_id, context=context)
     
     return api_response(True, data=result.to_dict())
 
@@ -275,7 +282,7 @@ def product_info_decision():
                 reasoning:
                   type: string
     """
-    from .product_info_intent_agent import get_product_info_route_decision
+    from .engenie_chat.engenie_chat_intent_agent import get_product_info_route_decision
     
     data = request.get_json()
     query = data.get('query', '').strip()
@@ -283,7 +290,7 @@ def product_info_decision():
     if not query:
         return api_response(False, error="query is required", status_code=400)
     
-    logger.info(f"[PRODUCT_INFO_DECISION] Analyzing query: {query[:100]}...")
+    logger.info(f"[ENGENIE_CHAT_DECISION] Analyzing query: {query[:100]}...")
     
     result = get_product_info_route_decision(query)
     
@@ -3704,6 +3711,801 @@ def cleanup_expired_threads():
     except Exception as e:
         logger.error(f"[THREAD_API] Cleanup failed: {e}")
         return api_response(False, error=f"Cleanup failed: {str(e)}", status_code=500)
+
+
+# ============================================================================
+# WORKFLOW REGISTRY API (Level 4.5)
+# ============================================================================
+
+@agentic_bp.route('/workflows', methods=['GET'])
+@login_required
+@handle_errors
+def list_workflows():
+    """
+    List All Registered Workflows
+    ---
+    tags:
+      - Workflow Registry
+    summary: Get all workflows registered in the WorkflowRegistry
+    description: |
+      Returns a list of all registered workflows with their metadata including:
+      - name, display name, description
+      - supported intents and keywords
+      - capabilities and priority
+      - enabled/disabled status
+    responses:
+      200:
+        description: List of registered workflows
+        schema:
+          type: object
+          properties:
+            success:
+              type: boolean
+            data:
+              type: object
+              properties:
+                workflows:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      name:
+                        type: string
+                      display_name:
+                        type: string
+                      description:
+                        type: string
+                      intents:
+                        type: array
+                        items:
+                          type: string
+                      priority:
+                        type: integer
+                      is_enabled:
+                        type: boolean
+                total:
+                  type: integer
+    """
+    try:
+        from .workflow_registry import get_workflow_registry
+        
+        registry = get_workflow_registry()
+        workflows = registry.list_all()
+        
+        return api_response(True, data={
+            "workflows": [w.to_dict() for w in workflows],
+            "total": len(workflows),
+            "registry_stats": registry.get_stats()
+        })
+    except ImportError:
+        return api_response(False, error="WorkflowRegistry not available", status_code=503)
+    except Exception as e:
+        logger.error(f"[REGISTRY_API] Failed to list workflows: {e}")
+        return api_response(False, error=str(e), status_code=500)
+
+
+@agentic_bp.route('/workflows/<workflow_name>', methods=['GET'])
+@login_required
+@handle_errors
+def get_workflow_info(workflow_name: str):
+    """
+    Get Workflow Details
+    ---
+    tags:
+      - Workflow Registry
+    summary: Get detailed information about a specific workflow
+    parameters:
+      - name: workflow_name
+        in: path
+        type: string
+        required: true
+        description: Name of the workflow (e.g., 'solution', 'instrument_identifier')
+    responses:
+      200:
+        description: Workflow details
+        schema:
+          type: object
+          properties:
+            success:
+              type: boolean
+            data:
+              type: object
+      404:
+        description: Workflow not found
+    """
+    try:
+        from .workflow_registry import get_workflow_registry
+        
+        registry = get_workflow_registry()
+        workflow = registry.get(workflow_name)
+        
+        if not workflow:
+            return api_response(False, error=f"Workflow '{workflow_name}' not found", status_code=404)
+        
+        return api_response(True, data={
+            "workflow": workflow.to_dict()
+        })
+    except ImportError:
+        return api_response(False, error="WorkflowRegistry not available", status_code=503)
+    except Exception as e:
+        logger.error(f"[REGISTRY_API] Failed to get workflow {workflow_name}: {e}")
+        return api_response(False, error=str(e), status_code=500)
+
+
+@agentic_bp.route('/workflows/<workflow_name>/invoke', methods=['POST'])
+@login_required
+@handle_errors
+def invoke_workflow_by_name(workflow_name: str):
+    """
+    Invoke Workflow by Name
+    ---
+    tags:
+      - Workflow Registry
+    summary: Invoke a specific workflow directly by name
+    description: |
+      Invokes a workflow by name using the WorkflowRegistry.
+      This bypasses intent classification and directly calls the workflow.
+      
+      The request body should contain the parameters expected by the workflow:
+      - user_input: The user's query/input (required for most workflows)
+      - session_id: Session identifier (optional, defaults to generated UUID)
+      - Other workflow-specific parameters
+      
+      If use_guardrails is true (default), input validation is performed first.
+    parameters:
+      - name: workflow_name
+        in: path
+        type: string
+        required: true
+        description: Name of the workflow to invoke
+      - in: body
+        name: body
+        required: true
+        schema:
+          type: object
+          properties:
+            user_input:
+              type: string
+              description: User query/input
+            session_id:
+              type: string
+              description: Session ID
+            use_guardrails:
+              type: boolean
+              description: Whether to validate input before invoking (default true)
+    responses:
+      200:
+        description: Workflow execution result
+        schema:
+          type: object
+          properties:
+            success:
+              type: boolean
+            data:
+              type: object
+      400:
+        description: Invalid request or guardrail blocked
+      404:
+        description: Workflow not found
+      503:
+        description: Workflow disabled or unavailable
+    """
+    try:
+        from .workflow_registry import get_workflow_registry
+        
+        data = request.get_json() or {}
+        user_input = data.get('user_input', '')
+        session_id = data.get('session_id', str(uuid.uuid4()))
+        use_guardrails = data.get('use_guardrails', True)
+        
+        registry = get_workflow_registry()
+        workflow = registry.get(workflow_name)
+        
+        if not workflow:
+            return api_response(False, error=f"Workflow '{workflow_name}' not found", status_code=404)
+        
+        if not workflow.is_enabled:
+            return api_response(False, error=f"Workflow '{workflow_name}' is disabled", status_code=503)
+        
+        logger.info(f"[REGISTRY_API] Invoking workflow '{workflow_name}' for session {session_id[:8]}...")
+        
+        # Build kwargs for the workflow
+        kwargs = {
+            'session_id': session_id
+        }
+        
+        # Add user_input with the appropriate key (some workflows use different names)
+        if user_input:
+            # Try common parameter names
+            if 'user_input' in str(workflow.entry_function.__code__.co_varnames):
+                kwargs['user_input'] = user_input
+            elif 'query' in str(workflow.entry_function.__code__.co_varnames):
+                kwargs['query'] = user_input
+            else:
+                kwargs['user_input'] = user_input  # Default to user_input
+        
+        # Invoke with or without guardrails
+        if use_guardrails and user_input:
+            result = registry.invoke_safe(workflow_name, query=user_input, **kwargs)
+            
+            if not result.get('success'):
+                # Guardrail blocked the request
+                return api_response(False, 
+                    error=result.get('error', 'Request blocked'),
+                    data={
+                        "guardrail_status": result.get('guardrail_status'),
+                        "suggested_response": result.get('suggested_response')
+                    },
+                    status_code=400
+                )
+            
+            workflow_result = result.get('data', {})
+        else:
+            workflow_result = registry.invoke(workflow_name, **kwargs)
+        
+        logger.info(f"[REGISTRY_API] Workflow '{workflow_name}' completed successfully")
+        
+        return api_response(True, data={
+            "workflow": workflow_name,
+            "session_id": session_id,
+            "result": workflow_result
+        })
+        
+    except ImportError:
+        return api_response(False, error="WorkflowRegistry not available", status_code=503)
+    except ValueError as e:
+        # Workflow not found or disabled
+        return api_response(False, error=str(e), status_code=404)
+    except Exception as e:
+        logger.error(f"[REGISTRY_API] Failed to invoke workflow {workflow_name}: {e}")
+        import traceback
+        traceback.print_exc()
+        return api_response(False, error=str(e), status_code=500)
+
+
+@agentic_bp.route('/workflows/<workflow_name>/match', methods=['POST'])
+@login_required
+@handle_errors
+def match_workflow(workflow_name: str):
+    """
+    Match Intent to Workflow
+    ---
+    tags:
+      - Workflow Registry
+    summary: Check if a workflow matches given intent
+    description: |
+      Uses the WorkflowRegistry to check if a specific workflow matches
+      the given intent and is_solution flag. Returns match details including
+      confidence and alternatives.
+    parameters:
+      - name: workflow_name
+        in: path
+        type: string
+        required: true
+        description: Workflow to match against
+      - in: body
+        name: body
+        required: true
+        schema:
+          type: object
+          properties:
+            intent:
+              type: string
+              description: Intent to match
+            is_solution:
+              type: boolean
+              description: Whether this is a solution-type request
+            confidence:
+              type: number
+              description: Classification confidence (0.0-1.0)
+    responses:
+      200:
+        description: Match result
+    """
+    try:
+        from .workflow_registry import get_workflow_registry
+        
+        data = request.get_json() or {}
+        intent = data.get('intent', '')
+        is_solution = data.get('is_solution', False)
+        confidence = data.get('confidence', 1.0)
+        
+        registry = get_workflow_registry()
+        match_result = registry.match_intent(intent, is_solution, confidence)
+        
+        return api_response(True, data={
+            "match": match_result.to_dict(),
+            "requested_workflow": workflow_name,
+            "is_match": match_result.workflow and match_result.workflow.name == workflow_name
+        })
+        
+    except ImportError:
+        return api_response(False, error="WorkflowRegistry not available", status_code=503)
+    except Exception as e:
+        logger.error(f"[REGISTRY_API] Match failed: {e}")
+        return api_response(False, error=str(e), status_code=500)
+
+
+@agentic_bp.route('/registry/stats', methods=['GET'])
+@login_required
+@handle_errors
+def get_registry_stats():
+    """
+    Get Registry Statistics
+    ---
+    tags:
+      - Workflow Registry
+    summary: Get WorkflowRegistry statistics
+    description: |
+      Returns statistics about the WorkflowRegistry including:
+      - Number of registered/enabled workflows
+      - Intent mappings
+      - Invocation and match counts
+      - Guardrail block counts
+    responses:
+      200:
+        description: Registry statistics
+    """
+    try:
+        from .workflow_registry import get_workflow_registry
+        
+        registry = get_workflow_registry()
+        stats = registry.get_stats()
+        
+        return api_response(True, data=stats)
+        
+    except ImportError:
+        return api_response(False, error="WorkflowRegistry not available", status_code=503)
+    except Exception as e:
+        logger.error(f"[REGISTRY_API] Failed to get stats: {e}")
+        return api_response(False, error=str(e), status_code=500)
+
+
+@agentic_bp.route('/registry/guardrails/validate', methods=['POST'])
+@login_required
+@handle_errors
+def validate_input_guardrails():
+    """
+    Validate Input with Guardrails
+    ---
+    tags:
+      - Workflow Registry
+    summary: Validate user input against guardrails
+    description: |
+      Runs guardrail validation on user input without invoking a workflow.
+      Useful for pre-flight validation before routing.
+      
+      Checks for:
+      - Empty or too short input
+      - Prompt injection attempts
+      - Suspicious patterns
+    parameters:
+      - in: body
+        name: body
+        required: true
+        schema:
+          type: object
+          required:
+            - query
+          properties:
+            query:
+              type: string
+              description: User input to validate
+    responses:
+      200:
+        description: Validation result
+        schema:
+          type: object
+          properties:
+            success:
+              type: boolean
+            data:
+              type: object
+              properties:
+                is_safe:
+                  type: boolean
+                status:
+                  type: string
+                  enum: [passed, blocked, needs_clarification, low_confidence]
+                reason:
+                  type: string
+                suggested_response:
+                  type: string
+    """
+    try:
+        from .workflow_registry import get_workflow_registry
+        
+        data = request.get_json() or {}
+        query = data.get('query', '')
+        
+        registry = get_workflow_registry()
+        result = registry.validate_input(query)
+        
+        return api_response(True, data={
+            "is_safe": result.is_safe,
+            "status": result.status.value,
+            "reason": result.reason,
+            "suggested_response": result.suggested_response,
+            "confidence": result.confidence
+        })
+        
+    except ImportError:
+        return api_response(False, error="WorkflowRegistry not available", status_code=503)
+    except Exception as e:
+        logger.error(f"[REGISTRY_API] Guardrail validation failed: {e}")
+        return api_response(False, error=str(e), status_code=500)
+
+
+# ============================================================================
+# WORKFLOW REGISTRY API - LEVEL 5 (Semantic Matching, Retry, A/B Testing)
+# ============================================================================
+
+@agentic_bp.route('/workflows/semantic-match', methods=['POST'])
+@login_required
+@handle_errors
+def semantic_match_workflow():
+    """
+    Semantic Workflow Match (Level 5)
+    ---
+    tags:
+      - Workflow Registry L5
+    summary: Find workflows using semantic similarity matching
+    description: Uses Gemini embeddings to find the best matching workflows based on semantic similarity
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required:
+              - query
+            properties:
+              query:
+                type: string
+                description: User query to match against workflow descriptions
+              top_k:
+                type: integer
+                default: 3
+                description: Number of top matches to return
+    responses:
+      200:
+        description: Semantic match results
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                matches:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      workflow:
+                        type: string
+                      confidence:
+                        type: number
+                      reasoning:
+                        type: string
+    """
+    try:
+        from .workflow_registry import get_workflow_registry
+        
+        data = request.get_json() or {}
+        query = data.get('query', '')
+        top_k = data.get('top_k', 3)
+        
+        if not query:
+            return api_response(False, error="query is required", status_code=400)
+        
+        registry = get_workflow_registry()
+        results = registry.match_semantic(query, top_k=top_k)
+        
+        return api_response(True, data={
+            "query": query,
+            "matches": [r.to_dict() for r in results],
+            "method": "semantic_embedding"
+        })
+        
+    except ImportError:
+        return api_response(False, error="WorkflowRegistry not available", status_code=503)
+    except Exception as e:
+        logger.error(f"[REGISTRY_API] Semantic match failed: {e}")
+        return api_response(False, error=str(e), status_code=500)
+
+
+@agentic_bp.route('/workflows/<workflow_name>/invoke-with-retry', methods=['POST'])
+@login_required
+@handle_errors
+def invoke_workflow_with_retry(workflow_name: str):
+    """
+    Invoke Workflow with Retry (Level 5)
+    ---
+    tags:
+      - Workflow Registry L5
+    summary: Invoke a workflow with automatic retry on transient failures
+    description: Uses the workflow's RetryPolicy for exponential backoff on rate limits and other transient errors
+    parameters:
+      - name: workflow_name
+        in: path
+        required: true
+        schema:
+          type: string
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required:
+              - user_input
+            properties:
+              user_input:
+                type: string
+              session_id:
+                type: string
+    responses:
+      200:
+        description: Workflow result
+    """
+    try:
+        from .workflow_registry import get_workflow_registry
+        
+        session_id = get_session_id()
+        data = request.get_json() or {}
+        user_input = data.get('user_input') or data.get('query') or data.get('message')
+        
+        if not user_input:
+            return api_response(False, error="user_input is required", status_code=400)
+        
+        registry = get_workflow_registry()
+        
+        # Get workflow metadata for logging
+        workflow = registry.get(workflow_name)
+        if not workflow:
+            return api_response(False, error=f"Workflow '{workflow_name}' not found", status_code=404)
+        
+        # Invoke with retry
+        result = registry.invoke_with_retry(
+            name=workflow_name,
+            user_input=user_input,
+            session_id=data.get('session_id', session_id)
+        )
+        
+        return api_response(True, data={
+            "workflow": workflow_name,
+            "result": result,
+            "retry_enabled": workflow.retry_policy is not None
+        })
+        
+    except ValueError as e:
+        return api_response(False, error=str(e), status_code=404)
+    except ImportError:
+        return api_response(False, error="WorkflowRegistry not available", status_code=503)
+    except Exception as e:
+        logger.error(f"[REGISTRY_API] Invoke with retry failed: {e}")
+        return api_response(False, error=str(e), status_code=500)
+
+
+# ============================================================================
+# A/B TESTING ENDPOINTS (Level 5)
+# ============================================================================
+
+@agentic_bp.route('/experiments', methods=['GET'])
+@login_required
+@handle_errors
+def list_experiments():
+    """
+    List A/B Experiments (Level 5)
+    ---
+    tags:
+      - A/B Testing
+    summary: List all A/B testing experiments
+    parameters:
+      - name: active_only
+        in: query
+        schema:
+          type: boolean
+          default: false
+    responses:
+      200:
+        description: List of experiments
+    """
+    try:
+        from .workflow_registry import get_workflow_registry
+        
+        active_only = request.args.get('active_only', 'false').lower() == 'true'
+        
+        registry = get_workflow_registry()
+        experiments = registry.list_experiments(active_only=active_only)
+        
+        return api_response(True, data={"experiments": experiments})
+        
+    except ImportError:
+        return api_response(False, error="WorkflowRegistry not available", status_code=503)
+    except Exception as e:
+        logger.error(f"[REGISTRY_API] List experiments failed: {e}")
+        return api_response(False, error=str(e), status_code=500)
+
+
+@agentic_bp.route('/experiments', methods=['POST'])
+@login_required
+@handle_errors
+def create_experiment():
+    """
+    Create A/B Experiment (Level 5)
+    ---
+    tags:
+      - A/B Testing
+    summary: Create a new A/B testing experiment
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required:
+              - experiment_id
+              - name
+              - base_workflow
+              - variant_workflow
+            properties:
+              experiment_id:
+                type: string
+              name:
+                type: string
+              base_workflow:
+                type: string
+              variant_workflow:
+                type: string
+              traffic_percentage:
+                type: number
+                default: 0.5
+    responses:
+      200:
+        description: Created experiment
+    """
+    try:
+        from .workflow_registry import get_workflow_registry
+        
+        data = request.get_json() or {}
+        
+        required = ['experiment_id', 'name', 'base_workflow', 'variant_workflow']
+        missing = [f for f in required if not data.get(f)]
+        if missing:
+            return api_response(False, error=f"Missing required fields: {missing}", status_code=400)
+        
+        registry = get_workflow_registry()
+        experiment = registry.create_experiment(
+            experiment_id=data['experiment_id'],
+            name=data['name'],
+            base_workflow=data['base_workflow'],
+            variant_workflow=data['variant_workflow'],
+            traffic_percentage=data.get('traffic_percentage', 0.5)
+        )
+        
+        return api_response(True, data={
+            "experiment": experiment.to_dict(),
+            "message": f"Experiment '{data['experiment_id']}' created successfully"
+        })
+        
+    except ValueError as e:
+        return api_response(False, error=str(e), status_code=400)
+    except ImportError:
+        return api_response(False, error="WorkflowRegistry not available", status_code=503)
+    except Exception as e:
+        logger.error(f"[REGISTRY_API] Create experiment failed: {e}")
+        return api_response(False, error=str(e), status_code=500)
+
+
+@agentic_bp.route('/experiments/<experiment_id>', methods=['GET'])
+@login_required
+@handle_errors
+def get_experiment_results(experiment_id: str):
+    """
+    Get Experiment Results (Level 5)
+    ---
+    tags:
+      - A/B Testing
+    summary: Get metrics and results for an experiment
+    parameters:
+      - name: experiment_id
+        in: path
+        required: true
+        schema:
+          type: string
+    responses:
+      200:
+        description: Experiment results with metrics
+    """
+    try:
+        from .workflow_registry import get_workflow_registry
+        
+        registry = get_workflow_registry()
+        results = registry.get_experiment_results(experiment_id)
+        
+        if not results:
+            return api_response(False, error=f"Experiment '{experiment_id}' not found", status_code=404)
+        
+        return api_response(True, data=results)
+        
+    except ImportError:
+        return api_response(False, error="WorkflowRegistry not available", status_code=503)
+    except Exception as e:
+        logger.error(f"[REGISTRY_API] Get experiment results failed: {e}")
+        return api_response(False, error=str(e), status_code=500)
+
+
+@agentic_bp.route('/experiments/<experiment_id>/stop', methods=['POST'])
+@login_required
+@handle_errors
+def stop_experiment(experiment_id: str):
+    """
+    Stop Experiment (Level 5)
+    ---
+    tags:
+      - A/B Testing
+    summary: Stop an active experiment
+    parameters:
+      - name: experiment_id
+        in: path
+        required: true
+        schema:
+          type: string
+    responses:
+      200:
+        description: Experiment stopped
+    """
+    try:
+        from .workflow_registry import get_workflow_registry
+        
+        registry = get_workflow_registry()
+        success = registry.stop_experiment(experiment_id)
+        
+        if not success:
+            return api_response(False, error=f"Experiment '{experiment_id}' not found", status_code=404)
+        
+        return api_response(True, data={
+            "message": f"Experiment '{experiment_id}' stopped successfully"
+        })
+        
+    except ImportError:
+        return api_response(False, error="WorkflowRegistry not available", status_code=503)
+    except Exception as e:
+        logger.error(f"[REGISTRY_API] Stop experiment failed: {e}")
+        return api_response(False, error=str(e), status_code=500)
+
+
+@agentic_bp.route('/workflows/refresh-embeddings', methods=['POST'])
+@login_required
+@handle_errors
+def refresh_workflow_embeddings():
+    """
+    Refresh Workflow Embeddings (Level 5)
+    ---
+    tags:
+      - Workflow Registry L5
+    summary: Regenerate embeddings for all registered workflows
+    description: Forces regeneration of all workflow embeddings using the current embedding model
+    responses:
+      200:
+        description: Embeddings refreshed
+    """
+    try:
+        from .workflow_registry import get_workflow_registry
+        
+        registry = get_workflow_registry()
+        count = registry.refresh_embeddings()
+        
+        return api_response(True, data={
+            "message": f"Successfully refreshed {count} workflow embeddings",
+            "count": count
+        })
+        
+    except ImportError:
+        return api_response(False, error="WorkflowRegistry not available", status_code=503)
+    except Exception as e:
+        logger.error(f"[REGISTRY_API] Refresh embeddings failed: {e}")
+        return api_response(False, error=str(e), status_code=500)
 
 
 # ============================================================================

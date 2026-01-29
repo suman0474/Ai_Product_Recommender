@@ -41,6 +41,23 @@ import time
 # Configure logging
 logger = logging.getLogger(__name__)
 
+# Debug flags for vendor analysis debugging
+try:
+    from debug_flags import debug_log, timed_execution, is_debug_enabled
+    DEBUG_AVAILABLE = True
+except ImportError:
+    DEBUG_AVAILABLE = False
+    def debug_log(module, **kwargs):
+        def decorator(func):
+            return func
+        return decorator
+    def timed_execution(module, **kwargs):
+        def decorator(func):
+            return func
+        return decorator
+    def is_debug_enabled(module):
+        return False
+
 
 class VendorAnalysisTool:
     """
@@ -67,6 +84,8 @@ class VendorAnalysisTool:
         self._response_cache = {}  # Cache for vendor analysis responses
         logger.info("[VendorAnalysisTool] Initialized with max_workers=%d", max_workers)
 
+    @timed_execution("VENDOR_ANALYSIS", threshold_ms=45000)
+    @debug_log("VENDOR_ANALYSIS", log_args=True, log_result=False)
     def analyze(
         self,
         structured_requirements: Dict[str, Any],
