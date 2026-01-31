@@ -441,6 +441,11 @@ class SolutionState(TypedDict, total=False):
     intent_confidence: float
     request_mode: str  # "design", "search", "comparison"
     comparison_mode: bool
+    
+    # NEW: Initial Intent Classification (from classify_initial_intent_node)
+    initial_intent: Optional[str]  # Intent classified at start of workflow
+    is_solution: bool  # Whether this is a solution/system design request
+    solution_indicators: List[str]  # Indicators that helped classify as solution
 
     # Product & Schema
     product_type: Optional[str]
@@ -485,6 +490,11 @@ class SolutionState(TypedDict, total=False):
 
     # Standards Validation (from enrichment)
     standards_validation: Optional[Dict[str, Any]]
+
+    # Standards Detection (NEW - conditional enrichment)
+    standards_detected: bool
+    standards_confidence: float
+    standards_indicators: List[str]
 
     # Thread Tree Metadata (for API response)
     thread_info: Optional[Dict[str, Any]]
@@ -551,12 +561,20 @@ class InstrumentIdentifierState(TypedDict, total=False):
     all_items: List[Dict[str, Any]]  # Combined list
     total_items: int
 
+    # Requirements (NEW - for standards detection)
+    provided_requirements: Dict[str, Any]
+
     # Response
     response: str
     response_data: Optional[Dict[str, Any]]  # Detailed UI data
     instrument_list: Optional[str]
     current_step: str
     error: Optional[str]
+
+    # Standards Detection (NEW - conditional enrichment)
+    standards_detected: bool
+    standards_confidence: float
+    standards_indicators: List[str]
 
     # Thread Tree Metadata (for API response)
     thread_info: Optional[Dict[str, Any]]
@@ -844,6 +862,10 @@ def create_solution_state(
         intent_confidence=0.0,
         request_mode="search",
         comparison_mode=False,
+        # NEW: Initial Intent Classification fields
+        initial_intent=None,
+        is_solution=True,  # Default to True for Solution Workflow
+        solution_indicators=[],
         product_type=None,
         schema=None,
         provided_requirements={},
@@ -872,8 +894,12 @@ def create_solution_state(
         comparison_matrix=None,
         response="",
         response_data=None,
-        current_step="analyze_solution",
-        error=None
+        current_step="classify_intent",  # CHANGED: Now starts with intent classification
+        error=None,
+        # Standards Detection (NEW)
+        standards_detected=False,
+        standards_confidence=0.0,
+        standards_indicators=[]
     )
 
 
@@ -925,10 +951,17 @@ def create_instrument_identifier_state(
         project_name=None,
         identified_instruments=[],
         identified_accessories=[],
+        all_items=[],
+        total_items=0,
+        provided_requirements={},
         response="",
         instrument_list=None,
         current_step="classify_input",
-        error=None
+        error=None,
+        # Standards Detection (NEW)
+        standards_detected=False,
+        standards_confidence=0.0,
+        standards_indicators=[]
     )
 
 

@@ -2,7 +2,23 @@ from typing import IO, List, Dict, Any
 import os
 import json
 import re
-import fitz  # PyMuPDF
+
+# Try PyMuPDF first, fall back to pypdf if DLL loading fails (common on Windows)
+PYMUPDF_AVAILABLE = False
+try:
+    import fitz  # PyMuPDF
+    PYMUPDF_AVAILABLE = True
+except ImportError as e:
+    print(f"PyMuPDF not available: {e}. Using pypdf fallback.")
+except OSError as e:
+    print(f"PyMuPDF DLL load failed: {e}. Using pypdf fallback.")
+
+if not PYMUPDF_AVAILABLE:
+    try:
+        from pypdf import PdfReader
+        print("Using pypdf as PDF extraction backend.")
+    except ImportError:
+        raise ImportError("Neither PyMuPDF nor pypdf is available. Install one of them.")
 
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import HumanMessage
@@ -16,44 +32,76 @@ print("1. Loading .env file...")
 
 # ---
 
-### Extract text and tables from PDF using PyMuPDF ###
+### Extract text and tables from PDF using PyMuPDF or pypdf fallback ###
 def extract_data_from_pdf(pdf_stream: IO[bytes]) -> List[str]:
     """
     Extracts text from PDF pages and converts tables heuristically into key-value lines.
     Each chunk includes the page number for context.
+    Uses PyMuPDF if available, otherwise falls back to pypdf.
     """
-    print("2. Extracting text from PDF using PyMuPDF...")
     page_chunks = []
-    try:
-        pdf_stream.seek(0)
-        doc = fitz.open(stream=pdf_stream, filetype="pdf")
+    
+    if PYMUPDF_AVAILABLE:
+        print("2. Extracting text from PDF using PyMuPDF...")
+        try:
+            pdf_stream.seek(0)
+            doc = fitz.open(stream=pdf_stream, filetype="pdf")
 
-        for page_number, page in enumerate(doc, start=1):
-            # Extract raw text
-            page_text = page.get_text("text") or ""
+            for page_number, page in enumerate(doc, start=1):
+                # Extract raw text
+                page_text = page.get_text("text") or ""
 
-            # Extract table-like blocks heuristically
-            table_lines = []
-            blocks = page.get_text("blocks") or []
-            for block in blocks:
-                lines = block[4].splitlines()
-                for line in lines:
-                    # Capture lines that look like key-value pairs (e.g., 'Key: Value')
+                # Extract table-like blocks heuristically
+                table_lines = []
+                blocks = page.get_text("blocks") or []
+                for block in blocks:
+                    lines = block[4].splitlines()
+                    for line in lines:
+                        # Capture lines that look like key-value pairs (e.g., 'Key: Value')
+                        if ":" in line:
+                            table_lines.append(line.strip())
+
+                # Combine text and table lines, and include page number
+                combined_text = f"--- Page {page_number} ---\n{page_text}\n" + "\n".join(table_lines)
+                combined_text = preprocess_specifications_text(combined_text)
+
+                page_chunks.append(combined_text)
+
+            print("2.1 PDF extraction into chunks successful.")
+            return page_chunks
+
+        except Exception as e:
+            print(f"Error during PDF extraction with PyMuPDF: {e}")
+            raise
+    else:
+        # Fallback to pypdf
+        print("2. Extracting text from PDF using pypdf (fallback)...")
+        try:
+            pdf_stream.seek(0)
+            reader = PdfReader(pdf_stream)
+
+            for page_number, page in enumerate(reader.pages, start=1):
+                # Extract raw text
+                page_text = page.extract_text() or ""
+
+                # For pypdf, we extract key-value pairs from the text itself
+                table_lines = []
+                for line in page_text.splitlines():
                     if ":" in line:
                         table_lines.append(line.strip())
 
-            # Combine text and table lines, and include page number
-            combined_text = f"--- Page {page_number} ---\n{page_text}\n" + "\n".join(table_lines)
-            combined_text = preprocess_specifications_text(combined_text)
+                # Combine text and table lines, and include page number
+                combined_text = f"--- Page {page_number} ---\n{page_text}\n" + "\n".join(table_lines)
+                combined_text = preprocess_specifications_text(combined_text)
 
-            page_chunks.append(combined_text)
+                page_chunks.append(combined_text)
 
-        print("2.1 PDF extraction into chunks successful.")
-        return page_chunks
+            print("2.1 PDF extraction into chunks successful (pypdf).")
+            return page_chunks
 
-    except Exception as e:
-        print(f"Error during PDF extraction: {e}")
-        raise
+        except Exception as e:
+            print(f"Error during PDF extraction with pypdf: {e}")
+            raise
 
 
 def split_text(text: str, chunk_size: int = 3000) -> List[str]:

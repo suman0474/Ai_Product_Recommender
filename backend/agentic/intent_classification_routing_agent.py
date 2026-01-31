@@ -123,17 +123,17 @@ def get_workflow_memory() -> WorkflowStateMemory:
 # EXIT DETECTION
 # =============================================================================
 
-# Phrases that indicate user wants to exit current workflow
+# Phrases that indicate user wants to exit current workflow (rule-based fallback)
 EXIT_PHRASES = [
     "start over", "new search", "reset", "clear", "begin again", 
     "start new", "exit", "quit", "cancel", "back to start"
 ]
 
-# Greetings that indicate new conversation
+# Greetings that indicate new conversation (rule-based fallback)
 GREETING_PHRASES = ["hi", "hello", "hey", "good morning", "good afternoon", "good evening"]
 
-def should_exit_workflow(user_input: str) -> bool:
-    """Check if user wants to exit current workflow."""
+def _should_exit_rule_based(user_input: str) -> bool:
+    """Rule-based fallback for exit detection (used when LLM is unavailable)."""
     lower_input = user_input.lower().strip()
     
     # Check for exit phrases
@@ -145,6 +145,34 @@ def should_exit_workflow(user_input: str) -> bool:
         return True
     
     return False
+
+def should_exit_workflow(user_input: str) -> bool:
+    """
+    Check if user wants to exit current workflow using LLM classification.
+    
+    Uses the classify_intent_tool with temperature 0.0 for deterministic results.
+    Falls back to rule-based detection if LLM fails.
+    """
+    try:
+        # Import here to avoid circular imports
+        from tools.intent_tools import _classify_llm_fast
+        
+        result = _classify_llm_fast(user_input)
+        
+        if result is not None:
+            intent = result.get("intent", "")
+            # Exit if classified as 'exit' or 'greeting' (new conversation)
+            if intent in {"exit", "greeting"}:
+                logger.info(f"[ExitDetection] LLM detected exit intent: '{intent}'")
+                return True
+            return False
+        
+        # LLM returned 'unknown' - not an exit intent
+        return False
+        
+    except Exception as e:
+        logger.warning(f"[ExitDetection] LLM classification failed: {e}, using rule-based fallback")
+        return _should_exit_rule_based(user_input)
 
 
 # =============================================================================

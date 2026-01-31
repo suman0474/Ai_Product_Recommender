@@ -13,9 +13,11 @@
 # FLOW:
 #   User: "I'm designing a crude oil distillation unit..."
 #   ↓
+#   0. Initial Intent Classification (NEW - matches instrument_identifier_workflow)
 #   1. Analyze Solution Context (extract domain, process, industry)
 #   2. Identify Instruments & Accessories (with sample_input for each)
-#   3. Format Selection List (await user selection)
+#   3. Enrich with Standards RAG
+#   4. Format Selection List (await user selection)
 #   ↓
 #   User selects item → sample_input → Product Search Workflow
 #
@@ -40,6 +42,9 @@ from .standards_rag.standards_rag_enrichment import (
     enrich_identified_items_with_standards,
     validate_items_against_domain_standards
 )
+
+# Standards detection for conditional enrichment
+from .standards_detector import detect_standards_indicators
 
 import os
 from dotenv import load_dotenv
@@ -139,6 +144,64 @@ Return ONLY valid JSON:
 # =============================================================================
 # WORKFLOW NODES
 # =============================================================================
+
+def classify_initial_intent_node(state: SolutionState) -> SolutionState:
+    """
+    Node 0: Initial Intent Classification.
+    Determines if this is a solution/system design request.
+    Stores intent for downstream nodes to use for more accurate identification.
+    
+    This mirrors the classify_initial_intent_node in instrument_identifier_workflow.py
+    to ensure consistent intent handling across both workflows.
+    """
+    logger.info("[SOLUTION] Node 0: Initial intent classification...")
+
+    try:
+        result = classify_intent_tool.invoke({
+            "user_input": state["user_input"],
+            "context": None
+        })
+
+        if result.get("success"):
+            state["initial_intent"] = result.get("intent", "solution")
+            state["is_solution"] = result.get("is_solution", True)
+            state["solution_indicators"] = result.get("solution_indicators", [])
+            
+            # Extract any additional context that might help identification
+            extracted_info = result.get("extracted_info", {})
+            if extracted_info:
+                # Merge extracted info into provided_requirements if relevant
+                if "domain" in extracted_info:
+                    state["provided_requirements"]["domain"] = extracted_info["domain"]
+                if "industry" in extracted_info:
+                    state["provided_requirements"]["industry"] = extracted_info["industry"]
+        else:
+            state["initial_intent"] = "solution"
+            state["is_solution"] = True
+            state["solution_indicators"] = []
+
+        state["current_step"] = "analyze_solution"
+
+        state["messages"] = state.get("messages", []) + [{
+            "role": "system",
+            "content": f"Initial intent: {state['initial_intent']} (is_solution={state.get('is_solution', True)})"
+        }]
+
+        logger.info(f"[SOLUTION] Initial intent: {state['initial_intent']}, is_solution={state.get('is_solution')}")
+        
+        if state.get("solution_indicators"):
+            logger.info(f"[SOLUTION] Solution indicators: {state['solution_indicators']}")
+
+    except Exception as e:
+        logger.error(f"[SOLUTION] Initial intent classification failed: {e}")
+        # Default to solution intent on error - this is the Solution Workflow after all
+        state["initial_intent"] = "solution"
+        state["is_solution"] = True
+        state["solution_indicators"] = []
+        state["error"] = str(e)
+
+    return state
+
 
 def analyze_solution_node(state: SolutionState) -> SolutionState:
     """
@@ -362,6 +425,53 @@ def identify_solution_instruments_node(state: SolutionState) -> SolutionState:
 
 
 # =============================================================================
+# STANDARDS DETECTION NODE (NEW - CONDITIONAL ENRICHMENT)
+# =============================================================================
+
+def detect_standards_requirements_node(state: SolutionState) -> SolutionState:
+    """
+    Node 2.5: Standards Detection for Conditional Enrichment.
+
+    Scans user_input + provided_requirements for standards indicators.
+    Sets standards_detected flag to skip expensive Phase 3 enrichment if not needed.
+
+    Detection sources:
+    - Text keywords: SIL, ATEX, IEC, ISO, API, hazardous, explosion-proof
+    - Domain keywords: Oil & Gas, Pharma, Chemical
+    - Provided requirements: sil_level, hazardous_area, domain, industry
+    - Critical specs: Temperature ranges, pressure ranges
+
+    This saves 5-8 seconds per request when standards detection is not needed.
+    """
+    logger.info("[SOLUTION] Node 2.5: Detecting standards requirements...")
+
+    user_input = state.get("user_input", "")
+    provided_requirements = state.get("provided_requirements", {})
+
+    # Run detection
+    detection_result = detect_standards_indicators(
+        user_input=user_input,
+        provided_requirements=provided_requirements
+    )
+
+    # Store detection results in state
+    state["standards_detected"] = detection_result["detected"]
+    state["standards_confidence"] = detection_result["confidence"]
+    state["standards_indicators"] = detection_result["indicators"]
+
+    if detection_result["detected"]:
+        logger.info(
+            f"[SOLUTION] Standards DETECTED (confidence={detection_result['confidence']:.2f}, "
+            f"indicators={len(detection_result['indicators'])})"
+        )
+    else:
+        logger.info("[SOLUTION] No standards detected - will skip Phase 3 deep enrichment")
+
+    state["current_step"] = "enrich_with_standards"
+    return state
+
+
+# =============================================================================
 # STANDARDS RAG ENRICHMENT NODE (BATCH OPTIMIZED)
 # =============================================================================
 
@@ -449,12 +559,14 @@ def enrich_solution_with_standards_node(state: SolutionState) -> SolutionState:
             logger.info(f"[SOLUTION]    Enriching only {unique_count} unique items...")
 
             # Enrich only unique items
+            standards_detected = state.get("standards_detected", True)  # Default True for safety
             result = run_optimized_parallel_enrichment(
                 items=unique_items,
                 user_input=user_input,
                 session_id=state.get("session_id", "solution-opt-parallel"),
                 domain_context=domain,
                 safety_requirements=safety_requirements,
+                standards_detected=standards_detected,  # NEW: Pass detection flag
                 max_parallel_products=5  # Process up to 5 products simultaneously
             )
 
@@ -492,12 +604,14 @@ def enrich_solution_with_standards_node(state: SolutionState) -> SolutionState:
         else:
             # No duplicates - enrich all items normally
             logger.info(f"[SOLUTION]    No duplicates found - all {unique_count} items are unique")
+            standards_detected = state.get("standards_detected", True)  # Default True for safety
             result = run_optimized_parallel_enrichment(
                 items=all_items,
                 user_input=user_input,
                 session_id=state.get("session_id", "solution-opt-parallel"),
                 domain_context=domain,
                 safety_requirements=safety_requirements,
+                standards_detected=standards_detected,  # NEW: Pass detection flag
                 max_parallel_products=5  # Process up to 5 products simultaneously
             )
         
@@ -956,9 +1070,12 @@ def create_solution_workflow() -> StateGraph:
     instruments/accessories, similar to instrument_identifier_workflow.py.
 
     Flow:
+    0. Initial Intent Classification (NEW - matches instrument_identifier_workflow)
     1. Analyze Solution Context (domain, process, safety)
     2. Identify Instruments & Accessories (with sample_input generation)
-    3. Format Selection List
+    2.5. Detect Standards Requirements (NEW - conditional enrichment)
+    3. Enrich with Standards RAG (conditional based on detection)
+    4. Format Selection List
 
     After this workflow completes, user selects an item, and the sample_input
     is routed to the PRODUCT SEARCH workflow.
@@ -970,6 +1087,11 @@ def create_solution_workflow() -> StateGraph:
     │  User: "I'm designing a crude oil distillation unit..."    │
     │                              ↓                               │
     │  ┌───────────────────────────────────────────────────────┐  │
+    │  │           classify_initial_intent (NEW)                │  │
+    │  │   (Classify intent, detect solution indicators)        │  │
+    │  └──────────────────────┬────────────────────────────────┘  │
+    │                         ↓                                    │
+    │  ┌───────────────────────────────────────────────────────┐  │
     │  │           analyze_solution                             │  │
     │  │   (Extract domain, process, safety requirements)       │  │
     │  └──────────────────────┬────────────────────────────────┘  │
@@ -977,6 +1099,16 @@ def create_solution_workflow() -> StateGraph:
     │  ┌───────────────────────────────────────────────────────┐  │
     │  │         identify_solution_instruments                  │  │
     │  │   (Identify instruments + accessories + sample_input) │  │
+    │  └──────────────────────┬────────────────────────────────┘  │
+    │                         ↓                                    │
+    │  ┌───────────────────────────────────────────────────────┐  │
+    │  │       detect_standards_requirements (NEW)              │  │
+    │  │   (Detect standards/safety indicators for Phase 3)    │  │
+    │  └──────────────────────┬────────────────────────────────┘  │
+    │                         ↓                                    │
+    │  ┌───────────────────────────────────────────────────────┐  │
+    │  │       enrich_with_standards (CONDITIONAL)              │  │
+    │  │   (Skip Phase 3 if no standards detected)             │  │
     │  └──────────────────────┬────────────────────────────────┘  │
     │                         ↓                                    │
     │  ┌───────────────────────────────────────────────────────┐  │
@@ -993,19 +1125,23 @@ def create_solution_workflow() -> StateGraph:
 
     workflow = StateGraph(SolutionState)
 
-    # Add 4 nodes (including Standards RAG enrichment)
+    # Add 6 nodes (including NEW intent classification, standards detection, and Standards RAG enrichment)
+    workflow.add_node("classify_intent", classify_initial_intent_node)  # NEW: Intent Classification
     workflow.add_node("analyze_solution", analyze_solution_node)
     workflow.add_node("identify_instruments", identify_solution_instruments_node)
-    workflow.add_node("enrich_with_standards", enrich_solution_with_standards_node)  # NEW: Standards RAG
+    workflow.add_node("detect_standards", detect_standards_requirements_node)  # NEW: Standards Detection
+    workflow.add_node("enrich_with_standards", enrich_solution_with_standards_node)
     workflow.add_node("format_list", format_solution_list_node)
 
-    # Set entry point
-    workflow.set_entry_point("analyze_solution")
+    # Set entry point - NOW starts with intent classification
+    workflow.set_entry_point("classify_intent")
 
-    # Add edges - linear flow with Standards RAG enrichment
+    # Add edges - linear flow with intent classification first, then standards detection
+    workflow.add_edge("classify_intent", "analyze_solution")  # NEW: Intent → Analysis
     workflow.add_edge("analyze_solution", "identify_instruments")
-    workflow.add_edge("identify_instruments", "enrich_with_standards")  # NEW: Route to Standards RAG
-    workflow.add_edge("enrich_with_standards", "format_list")  # NEW: Then to formatting
+    workflow.add_edge("identify_instruments", "detect_standards")  # NEW: Identify → Detect
+    workflow.add_edge("detect_standards", "enrich_with_standards")  # NEW: Detect → Enrich
+    workflow.add_edge("enrich_with_standards", "format_list")
     workflow.add_edge("format_list", END)  # WORKFLOW ENDS HERE - waits for user selection
 
     return workflow

@@ -143,6 +143,253 @@ def get_default_schema(product_type: str) -> Dict[str, Any]:
 
 
 # ============================================================================
+# SAMPLE INPUT INTENT CLASSIFICATION (for accurate schema retrieval)
+# ============================================================================
+
+# Product type patterns for rule-based classification
+_PRODUCT_TYPE_PATTERNS = {
+    "temperature transmitter": [
+        "temperature transmitter", "temp transmitter", "temperature sensor",
+        "thermocouple", "rtd", "pt100", "°c", "°f", "celsius", "fahrenheit",
+        "thermal", "heat measurement"
+    ],
+    "pressure transmitter": [
+        "pressure transmitter", "pressure sensor", "pressure gauge",
+        "differential pressure", "dp transmitter", "psi", "bar", "mpa", "kpa",
+        "absolute pressure", "gauge pressure"
+    ],
+    "flow meter": [
+        "flow meter", "flowmeter", "flow measurement", "coriolis", "vortex",
+        "ultrasonic flow", "mass flow", "volumetric flow", "magnetic flow",
+        "turbine flow", "gpm", "m³/h", "l/min"
+    ],
+    "level transmitter": [
+        "level transmitter", "level sensor", "level measurement",
+        "radar level", "ultrasonic level", "guided wave radar", "gwr",
+        "capacitance level", "hydrostatic level", "tank level"
+    ],
+    "control valve": [
+        "control valve", "valve", "actuator", "globe valve", "ball valve",
+        "butterfly valve", "gate valve", "on-off valve", "positioner",
+        "pneumatic actuator", "electric actuator"
+    ],
+    "analyzer": [
+        "analyzer", "ph analyzer", "conductivity", "dissolved oxygen",
+        "gas analyzer", "turbidity", "orp", "chlorine analyzer",
+        "moisture analyzer", "oxygen analyzer"
+    ],
+    "thermowell": [
+        "thermowell", "protection tube", "sensor protection"
+    ],
+    "transmitter": [
+        "transmitter", "4-20ma", "hart", "fieldbus", "profibus"
+    ]
+}
+
+# Domain context patterns
+_DOMAIN_PATTERNS = {
+    "oil_gas": [
+        "crude", "refinery", "distillation", "petrochemical", "petroleum",
+        "pipeline", "offshore", "upstream", "downstream", "lng", "gas plant"
+    ],
+    "chemical": [
+        "reactor", "chemical", "batch", "continuous", "synthesis",
+        "catalyst", "polymerization", "exothermic"
+    ],
+    "pharma": [
+        "pharmaceutical", "gmp", "cleanroom", "aseptic", "sterile",
+        "bioreactor", "fermentation", "usp", "fda"
+    ],
+    "power": [
+        "boiler", "turbine", "power plant", "steam", "combustion",
+        "generator", "condenser"
+    ],
+    "water": [
+        "water treatment", "wastewater", "drinking water", "desalination",
+        "effluent", "sludge", "aeration"
+    ]
+}
+
+# Specification hint patterns (key specs that help identify product type)
+_SPEC_HINT_PATTERNS = {
+    "temperature_range": [
+        r'-?\d+\s*°?[cCfF]', r'-?\d+\s*to\s*-?\d+\s*°?[cCfF]',
+        r'temperature.*range', r'operating.*temp'
+    ],
+    "pressure_range": [
+        r'\d+\s*(psi|bar|mpa|kpa)', r'pressure.*range',
+        r'\d+\s*to\s*\d+\s*(psi|bar)'
+    ],
+    "flow_range": [
+        r'\d+\s*(gpm|m³/h|l/min|lpm)', r'flow.*rate', r'flow.*range'
+    ],
+    "accuracy": [
+        r'±?\d+\.?\d*\s*%', r'accuracy', r'precision'
+    ],
+    "output_signal": [
+        r'4-20\s*ma', r'hart', r'profibus', r'foundation.*fieldbus',
+        r'modbus', r'digital.*output'
+    ]
+}
+
+
+def classify_sample_input_intent(sample_input: str) -> Dict[str, Any]:
+    """
+    Classify the intent of a sample_input to determine accurate product type.
+    Called within validation to improve schema selection accuracy.
+    
+    Uses a two-step approach:
+    1. Rule-based pattern matching (fast, no LLM call)
+    2. LLM fallback for ambiguous cases (only if confidence < 0.6)
+    
+    Args:
+        sample_input: The search query/sample input from instrument identifier
+        
+    Returns:
+        Dict containing:
+        - product_type: Detected product category
+        - confidence: Classification confidence (0.0-1.0)
+        - domain_context: Extracted domain hints (e.g., "oil_gas", "chemical")
+        - specification_hints: Key specs detected in the input
+        - classification_method: "rule_based" or "llm_fallback"
+    """
+    import re
+    
+    sample_lower = sample_input.lower().strip()
+    
+    # Step 1: Rule-based product type detection
+    product_scores = {}
+    
+    for product_type, patterns in _PRODUCT_TYPE_PATTERNS.items():
+        score = 0
+        matched_patterns = []
+        
+        for pattern in patterns:
+            if pattern in sample_lower:
+                # Exact phrase match gets higher score
+                if len(pattern.split()) > 1:
+                    score += 2  # Multi-word phrase match
+                else:
+                    score += 1  # Single word match
+                matched_patterns.append(pattern)
+        
+        if score > 0:
+            product_scores[product_type] = {
+                "score": score,
+                "matched_patterns": matched_patterns
+            }
+    
+    # Step 2: Extract domain context
+    detected_domains = []
+    for domain, patterns in _DOMAIN_PATTERNS.items():
+        for pattern in patterns:
+            if pattern in sample_lower:
+                detected_domains.append(domain)
+                break
+    
+    # Step 3: Extract specification hints
+    spec_hints = {}
+    for spec_type, patterns in _SPEC_HINT_PATTERNS.items():
+        for pattern in patterns:
+            matches = re.findall(pattern, sample_lower, re.IGNORECASE)
+            if matches:
+                spec_hints[spec_type] = matches
+                break
+    
+    # Step 4: Determine best product type
+    if product_scores:
+        # Sort by score, get highest
+        sorted_products = sorted(
+            product_scores.items(),
+            key=lambda x: x[1]["score"],
+            reverse=True
+        )
+        
+        best_match = sorted_products[0]
+        product_type = best_match[0]
+        max_score = best_match[1]["score"]
+        
+        # Calculate confidence based on score and uniqueness
+        # Higher score and bigger gap to second place = higher confidence
+        if len(sorted_products) > 1:
+            second_score = sorted_products[1][1]["score"]
+            gap = max_score - second_score
+            confidence = min(0.5 + (max_score * 0.1) + (gap * 0.15), 1.0)
+        else:
+            confidence = min(0.5 + (max_score * 0.15), 1.0)
+        
+        logger.info(f"[CLASSIFY_INTENT] Rule-based: '{product_type}' (conf={confidence:.2f})")
+        
+        return {
+            "success": True,
+            "product_type": product_type,
+            "confidence": round(confidence, 2),
+            "domain_context": detected_domains,
+            "specification_hints": spec_hints,
+            "classification_method": "rule_based",
+            "matched_patterns": best_match[1]["matched_patterns"]
+        }
+    
+    # Step 5: If no rule-based match, try lightweight LLM classification
+    if not product_scores:
+        logger.info(f"[CLASSIFY_INTENT] No rule-based match, trying LLM fallback...")
+        
+        try:
+            llm = create_llm_with_fallback(
+                model="gemini-2.5-flash",
+                temperature=0.1,
+                google_api_key=os.getenv("GOOGLE_API_KEY")
+            )
+            
+            classification_prompt = ChatPromptTemplate.from_template("""
+You are an industrial instrument classification expert. Analyze the following sample input and determine the product type.
+
+Sample Input: {sample_input}
+
+Return ONLY valid JSON:
+{{
+    "product_type": "<one of: temperature transmitter, pressure transmitter, flow meter, level transmitter, control valve, analyzer, thermowell, transmitter, or other industrial instrument>",
+    "confidence": <0.0-1.0>,
+    "reasoning": "<brief explanation>"
+}}
+""")
+            
+            parser = JsonOutputParser()
+            chain = classification_prompt | llm | parser
+            
+            result = chain.invoke({"sample_input": sample_input})
+            
+            product_type = result.get("product_type", "transmitter")
+            confidence = result.get("confidence", 0.5)
+            
+            logger.info(f"[CLASSIFY_INTENT] LLM fallback: '{product_type}' (conf={confidence:.2f})")
+            
+            return {
+                "success": True,
+                "product_type": product_type,
+                "confidence": round(confidence, 2),
+                "domain_context": detected_domains,
+                "specification_hints": spec_hints,
+                "classification_method": "llm_fallback",
+                "reasoning": result.get("reasoning", "")
+            }
+            
+        except Exception as e:
+            logger.warning(f"[CLASSIFY_INTENT] LLM fallback failed: {e}")
+    
+    # Final fallback: Return generic with low confidence
+    return {
+        "success": False,
+        "product_type": "transmitter",
+        "confidence": 0.3,
+        "domain_context": detected_domains,
+        "specification_hints": spec_hints,
+        "classification_method": "fallback",
+        "error": "No pattern match and LLM failed"
+    }
+
+
+# ============================================================================
 # TOOLS
 # ============================================================================
 
@@ -283,12 +530,36 @@ def validate_requirements_tool(
 ) -> Dict[str, Any]:
     """
     Validate user requirements against the product schema.
+    
+    ENHANCEMENT: Uses classify_sample_input_intent to improve product type
+    detection before loading schema, especially for ambiguous sample_inputs.
+    
     Returns validation status, provided requirements, and missing fields.
     """
     try:
-        # Load schema if not provided
+        # ENHANCEMENT: Use intent classification to refine product type
+        # This improves schema retrieval accuracy for ambiguous inputs
+        refined_product_type = product_type
+        intent_classification = None
+        
+        if user_input:
+            intent_classification = classify_sample_input_intent(user_input)
+            
+            if intent_classification.get("success") and intent_classification.get("confidence", 0) >= 0.7:
+                classified_type = intent_classification.get("product_type", "")
+                
+                # Only override if classification is more specific or different
+                if classified_type and classified_type != "transmitter":
+                    logger.info(
+                        f"[VALIDATE] Intent classification refined product_type: "
+                        f"'{product_type}' -> '{classified_type}' "
+                        f"(conf={intent_classification['confidence']:.2f})"
+                    )
+                    refined_product_type = classified_type
+        
+        # Load schema if not provided (using refined product type)
         if not product_schema:
-            schema_result = load_schema_tool.invoke({"product_type": product_type})
+            schema_result = load_schema_tool.invoke({"product_type": refined_product_type})
             product_schema = schema_result.get("schema", {})
 
         llm = create_llm_with_fallback(
@@ -304,19 +575,32 @@ def validate_requirements_tool(
 
         result = chain.invoke({
             "user_input": user_input,
-            "product_type": product_type,
+            "product_type": refined_product_type,
             "schema": json.dumps(product_schema, indent=2)
         })
 
-        return {
+        response = {
             "success": True,
             "is_valid": result.get("is_valid", False),
-            "product_type": result.get("product_type", product_type),
+            "product_type": result.get("product_type", refined_product_type),
             "provided_requirements": result.get("provided_requirements", {}),
             "missing_fields": result.get("missing_fields", []),
             "optional_fields": result.get("optional_fields", []),
             "validation_messages": result.get("validation_messages", [])
         }
+        
+        # Add intent classification metadata if available
+        if intent_classification:
+            response["intent_classification"] = {
+                "detected_type": intent_classification.get("product_type"),
+                "confidence": intent_classification.get("confidence"),
+                "domain_context": intent_classification.get("domain_context", []),
+                "specification_hints": intent_classification.get("specification_hints", {}),
+                "method": intent_classification.get("classification_method")
+            }
+            response["product_type_refined"] = refined_product_type != product_type
+        
+        return response
 
     except Exception as e:
         logger.error(f"Validation failed: {e}")

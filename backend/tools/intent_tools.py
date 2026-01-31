@@ -39,6 +39,7 @@ _INTENT_PROMPTS = load_prompt_sections("intent_prompts")
 
 INTENT_CLASSIFICATION_PROMPT = _INTENT_PROMPTS["CLASSIFICATION"]
 REQUIREMENTS_EXTRACTION_PROMPT = _INTENT_PROMPTS["REQUIREMENTS_EXTRACTION"]
+QUICK_CLASSIFICATION_PROMPT = _INTENT_PROMPTS.get("QUICK_CLASSIFICATION", None)
 
 
 # ============================================================================
@@ -124,12 +125,13 @@ def _classify_rule_based(user_input: str) -> Optional[Dict[str, Any]]:
         logger.info(f"[INTENT_RULE] Knowledge question detected: '{query[:50]}'")
         return {
             "success": True,
-            "intent": "question",
+            "intent": "chat",  # New 4-intent architecture
             "confidence": 0.95,
             "next_step": None,
             "extracted_info": {"rule_based": True},
             "is_solution": False,
-            "solution_indicators": []
+            "key_indicators": ["knowledge_question"],
+            "reasoning": "Detected knowledge/educational query about industrial topic"
         }
 
     # Product requests - need to distinguish complex systems from simple requests (PHASE 3 FIX)
@@ -193,7 +195,7 @@ def _classify_rule_based(user_input: str) -> Optional[Dict[str, Any]]:
             logger.info(f"[INTENT_RULE] Knowledge query detected: '{query[:50]}' (knowledge={is_knowledge_query}, rag_knowledge={is_rag_knowledge_query})")
             return {
                 "success": True,
-                "intent": "question",
+                "intent": "chat",  # New 4-intent architecture
                 "confidence": 0.9,
                 "next_step": None,
                 "extracted_info": {
@@ -202,7 +204,8 @@ def _classify_rule_based(user_input: str) -> Optional[Dict[str, Any]]:
                     "is_rag_knowledge_query": is_rag_knowledge_query
                 },
                 "is_solution": False,
-                "solution_indicators": []
+                "key_indicators": ["knowledge_query"],
+                "reasoning": "Detected educational/informational query"
             }
         
         # Solution action phrase OR complex system → Solution workflow
@@ -231,16 +234,17 @@ def _classify_rule_based(user_input: str) -> Optional[Dict[str, Any]]:
                 "solution_indicators": matched_indicators
             }
         
-        # Default: Simple product request → Instrument Identifier
+        # Default: Simple product request with specs → Search workflow
         logger.info(f"[INTENT_RULE] Simple product request detected: '{query[:50]}'")
         return {
             "success": True,
-            "intent": "requirements",
+            "intent": "search",  # New 4-intent architecture (was 'requirements')
             "confidence": 0.9,
             "next_step": None,
             "extracted_info": {"rule_based": True},
             "is_solution": False,
-            "solution_indicators": []
+            "key_indicators": ["product_request"],
+            "reasoning": "Detected single product request with specifications"
         }
 
     # PHASE 3 FIX: Solution design phrases that don't start with product request starters
@@ -268,6 +272,110 @@ def _classify_rule_based(user_input: str) -> Optional[Dict[str, Any]]:
 
 
 # ============================================================================
+# LLM-BASED FAST CLASSIFICATION (REPLACES RULE-BASED FOR SIMPLE INTENTS)
+# ============================================================================
+# Uses LLM with temperature=0.0 for deterministic classification of simple intents.
+# This ensures consistent, intelligent classification while still being fast.
+
+def _classify_llm_fast(user_input: str) -> Optional[Dict[str, Any]]:
+    """
+    LLM-based fast classification for simple intents using temperature 0.0.
+    
+    This replaces the rule-based classification with an LLM call that can
+    intelligently handle greetings, confirmations, rejections, and exit phrases.
+    
+    Returns:
+        - Result dict for greeting/confirm/reject/exit intents
+        - None if classified as 'unknown' (requires full LLM classification)
+    """
+    # Check if prompt is available
+    if not QUICK_CLASSIFICATION_PROMPT:
+        logger.warning("[INTENT_LLM_FAST] QUICK_CLASSIFICATION prompt not available, falling back to rule-based")
+        return _classify_rule_based(user_input)
+    
+    try:
+        # Create LLM with temperature=0.0 for deterministic output
+        llm = create_llm_with_fallback(
+            model="gemini-2.5-flash",
+            temperature=0.0,  # Deterministic output
+            google_api_key=os.getenv("GOOGLE_API_KEY")
+        )
+        
+        prompt = ChatPromptTemplate.from_template(QUICK_CLASSIFICATION_PROMPT)
+        parser = JsonOutputParser()
+        
+        chain = prompt | llm | parser
+        
+        # Use retry wrapper for reliability
+        result = invoke_with_retry_fallback(
+            chain,
+            {"user_input": user_input},
+            max_retries=2,  # Fewer retries for speed
+            fallback_to_openai=True,
+            model="gemini-2.5-flash",
+            temperature=0.0
+        )
+        
+        intent = result.get("intent", "unknown")
+        confidence = result.get("confidence", 0.5)
+        
+        logger.info(f"[INTENT_LLM_FAST] Classified '{user_input[:40]}...' as '{intent}' (conf={confidence:.2f})")
+        
+        # If unknown, return None to trigger full classification
+        if intent == "unknown":
+            logger.debug("[INTENT_LLM_FAST] Unknown intent, deferring to full classification")
+            return None
+        
+        # Map LLM result to standard response format
+        intent_mapping = {
+            "greeting": {
+                "intent": "greeting",
+                "next_step": "greeting",
+                "is_solution": False,
+                "solution_indicators": []
+            },
+            "confirm": {
+                "intent": "confirm",
+                "next_step": None,
+                "is_solution": False,
+                "solution_indicators": []
+            },
+            "reject": {
+                "intent": "reject",
+                "next_step": None,
+                "is_solution": False,
+                "solution_indicators": []
+            },
+            "exit": {
+                "intent": "exit",
+                "next_step": "reset",
+                "is_solution": False,
+                "solution_indicators": []
+            }
+        }
+        
+        if intent in intent_mapping:
+            return {
+                "success": True,
+                "intent": intent_mapping[intent]["intent"],
+                "confidence": confidence,
+                "next_step": intent_mapping[intent]["next_step"],
+                "extracted_info": {"llm_fast_classification": True, "temperature": 0.0},
+                "is_solution": intent_mapping[intent]["is_solution"],
+                "solution_indicators": intent_mapping[intent]["solution_indicators"]
+            }
+        
+        # Unexpected intent value - defer to full classification
+        logger.warning(f"[INTENT_LLM_FAST] Unexpected intent '{intent}', deferring to full classification")
+        return None
+        
+    except Exception as e:
+        logger.warning(f"[INTENT_LLM_FAST] LLM fast classification failed: {e}, falling back to rule-based")
+        # Fallback to rule-based on LLM failure
+        return _classify_rule_based(user_input)
+
+
+# ============================================================================
 # TOOLS
 # ============================================================================
 
@@ -281,21 +389,21 @@ def classify_intent_tool(
     Classify user intent for routing in the procurement workflow.
     Returns intent type, confidence, and suggested next step.
 
-    OPTIMIZATION: Tries rule-based classification first to avoid LLM calls
-    for obvious intents (greetings, confirms, knowledge questions, simple requests).
-    Falls back to LLM with invoke_with_retry_fallback for ambiguous queries.
+    APPROACH: Uses LLM-based classification with temperature 0.0 for ALL intents,
+    ensuring consistent and intelligent classification for greetings, confirms,
+    rejects, and exits. Falls back to full LLM classification for complex queries.
     """
     # =========================================================================
-    # STEP 1: Try rule-based classification (no LLM call)
+    # STEP 1: Try LLM-based fast classification (temperature 0.0)
     # =========================================================================
-    rule_result = _classify_rule_based(user_input)
-    if rule_result is not None:
-        return rule_result
+    fast_result = _classify_llm_fast(user_input)
+    if fast_result is not None:
+        return fast_result
 
     # =========================================================================
-    # STEP 2: Fall back to LLM classification
+    # STEP 2: Fall back to full LLM classification for complex queries
     # =========================================================================
-    logger.info(f"[INTENT_LLM] Rule-based didn't match, calling LLM for: '{user_input[:60]}'")
+    logger.info(f"[INTENT_LLM] Fast classification returned unknown, using full LLM for: '{user_input[:60]}'")
 
     try:
         llm = create_llm_with_fallback(
@@ -323,21 +431,24 @@ def classify_intent_tool(
             temperature=0.1
         )
 
+        # Map new 4-intent architecture to response
+        intent = result.get("intent", "invalid_input")
         return {
             "success": True,
-            "intent": result.get("intent", "unrelated"),
+            "intent": intent,
             "confidence": result.get("confidence", 0.5),
             "next_step": result.get("next_step"),
             "extracted_info": result.get("extracted_info", {}),
             "is_solution": result.get("is_solution", False),
-            "solution_indicators": result.get("solution_indicators", [])
+            "key_indicators": result.get("key_indicators", []),
+            "reasoning": result.get("reasoning", "")
         }
 
     except Exception as e:
         logger.error(f"Intent classification failed: {e}")
         return {
             "success": False,
-            "intent": "unrelated",
+            "intent": "invalid_input",  # New 4-intent architecture
             "confidence": 0.0,
             "next_step": None,
             "error": str(e)

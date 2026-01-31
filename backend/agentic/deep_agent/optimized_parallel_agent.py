@@ -488,6 +488,7 @@ def run_optimized_parallel_enrichment(
     domain_context: Optional[str] = None,
     safety_requirements: Optional[Dict[str, Any]] = None,
     memory: Optional[DeepAgentMemory] = None,
+    standards_detected: bool = True,
     max_parallel_products: int = 5
 ) -> Dict[str, Any]:
     """
@@ -510,6 +511,8 @@ def run_optimized_parallel_enrichment(
         domain_context: Domain context
         safety_requirements: Safety requirements
         memory: DeepAgentMemory instance
+        standards_detected: Whether standards indicators were detected (default: True)
+            If False, skips expensive Phase 3 standards extraction
         max_parallel_products: Max concurrent product processors (default: 5)
     
     Returns:
@@ -582,50 +585,57 @@ def run_optimized_parallel_enrichment(
     logger.info(f"[OPT_PARALLEL] Phase 2: All products done in {phase2_time:.2f}s")
     
     # ==========================================================================
-    # PHASE 3: Standards extraction (batch, already optimized)
+    # PHASE 3: Standards extraction (batch, CONDITIONAL based on detection)
     # ==========================================================================
-    
+
     phase3_start = time.time()
     standards_specs_results = {}
-    
-    logger.info("[OPT_PARALLEL] Phase 3: Standards extraction...")
-
-    # FIX #2: Store full combined_specifications from Step 5, not just standards_specifications
     combined_specs_from_step5 = {}
 
-    try:
-        standards_result = run_standards_deep_agent_batch(
-            items=items,
-            session_id=session_id,
-            domain_context=domain_context,
-            safety_requirements=safety_requirements
+    if not standards_detected:
+        logger.info(
+            "[OPT_PARALLEL] SKIPPING Phase 3: Standards not detected. "
+            "Using iterative enrichment (user + LLM specs only)."
         )
+        phase3_time = time.time() - phase3_start
+        logger.info(f"[OPT_PARALLEL] Phase 3: Skipped in {phase3_time:.2f}s (saved time)")
+    else:
+        logger.info("[OPT_PARALLEL] Phase 3: Standards DETECTED - Running full extraction...")
 
-        if standards_result.get("success"):
-            for enriched_item in standards_result.get("items", []):
-                item_name = enriched_item.get("name") or enriched_item.get("product_name", "Unknown")
+        # FIX #2: Store full combined_specifications from Step 5, not just standards_specifications
+        try:
+            standards_result = run_standards_deep_agent_batch(
+                items=items,
+                session_id=session_id,
+                domain_context=domain_context,
+                safety_requirements=safety_requirements
+            )
 
-                # FIX #2: Extract full combined_specifications from Step 5
-                # This has already merged user + llm + standards specs
-                combined_from_step5 = enriched_item.get("combined_specifications", {})
-                combined_specs_from_step5[item_name] = combined_from_step5
+            if standards_result.get("success"):
+                for enriched_item in standards_result.get("items", []):
+                    item_name = enriched_item.get("name") or enriched_item.get("product_name", "Unknown")
 
-                step5_spec_count = len([v for v in combined_from_step5.values()
-                                       if v and str(v).lower() not in ["null", "none", ""]])
-                logger.info(f"[OPT_PARALLEL-PHASE3] Item '{item_name}': Step5 returned {step5_spec_count} combined specs")
+                    # FIX #2: Extract full combined_specifications from Step 5
+                    # This has already merged user + llm + standards specs
+                    combined_from_step5 = enriched_item.get("combined_specifications", {})
+                    combined_specs_from_step5[item_name] = combined_from_step5
 
-                # Also extract standards_specifications for fallback merge
-                raw_specs = enriched_item.get("standards_specifications", {})
-                normalized_specs = normalize_specification_output(raw_specs, preserve_ghost_values=False)
-                clean_specs = {k: v for k, v in normalized_specs.items() if not k.startswith('_')}
-                standards_specs_results[item_name] = clean_specs
-    except Exception as e:
-        import traceback
-        logger.error(f"[OPT_PARALLEL] Standards extraction failed: {e}")
-        logger.error(f"[OPT_PARALLEL] Full traceback:\n{traceback.format_exc()}")
-    
-    phase3_time = time.time() - phase3_start
-    logger.info(f"[OPT_PARALLEL] Phase 3: Standards done in {phase3_time:.2f}s")
+                    step5_spec_count = len([v for v in combined_from_step5.values()
+                                           if v and str(v).lower() not in ["null", "none", ""]])
+                    logger.info(f"[OPT_PARALLEL-PHASE3] Item '{item_name}': Step5 returned {step5_spec_count} combined specs")
+
+                    # Also extract standards_specifications for fallback merge
+                    raw_specs = enriched_item.get("standards_specifications", {})
+                    normalized_specs = normalize_specification_output(raw_specs, preserve_ghost_values=False)
+                    clean_specs = {k: v for k, v in normalized_specs.items() if not k.startswith('_')}
+                    standards_specs_results[item_name] = clean_specs
+        except Exception as e:
+            import traceback
+            logger.error(f"[OPT_PARALLEL] Standards extraction failed: {e}")
+            logger.error(f"[OPT_PARALLEL] Full traceback:\n{traceback.format_exc()}")
+
+        phase3_time = time.time() - phase3_start
+        logger.info(f"[OPT_PARALLEL] Phase 3: Standards done in {phase3_time:.2f}s")
     
     # ==========================================================================
     # PHASE 4: Merge and deduplicate

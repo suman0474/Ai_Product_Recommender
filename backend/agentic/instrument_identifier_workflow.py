@@ -20,6 +20,9 @@ from tools.instrument_tools import identify_instruments_tool, identify_accessori
 # Standards RAG enrichment for grounded identification
 from .standards_rag.standards_rag_enrichment import enrich_identified_items_with_standards
 
+# Standards detection for conditional enrichment
+from .standards_detector import detect_standards_indicators
+
 import os
 from dotenv import load_dotenv
 from llm_fallback import create_llm_with_fallback
@@ -616,6 +619,53 @@ def format_selection_list_node(state: InstrumentIdentifierState) -> InstrumentId
 
 
 # ============================================================================
+# STANDARDS DETECTION NODE (NEW - CONDITIONAL ENRICHMENT)
+# ============================================================================
+
+def detect_standards_requirements_node(state: InstrumentIdentifierState) -> InstrumentIdentifierState:
+    """
+    Node 3.5: Standards Detection for Conditional Enrichment.
+
+    Scans user_input + provided_requirements for standards indicators.
+    Sets standards_detected flag to skip expensive Phase 3 enrichment if not needed.
+
+    Detection sources:
+    - Text keywords: SIL, ATEX, IEC, ISO, API, hazardous, explosion-proof
+    - Domain keywords: Oil & Gas, Pharma, Chemical
+    - Provided requirements: sil_level, hazardous_area, domain, industry
+    - Critical specs: Temperature ranges, pressure ranges
+
+    This saves 5-8 seconds per request when standards detection is not needed.
+    """
+    logger.info("[IDENTIFIER] Node 3.5: Detecting standards requirements...")
+
+    user_input = state.get("user_input", "")
+    provided_requirements = state.get("provided_requirements", {})
+
+    # Run detection
+    detection_result = detect_standards_indicators(
+        user_input=user_input,
+        provided_requirements=provided_requirements
+    )
+
+    # Store detection results in state
+    state["standards_detected"] = detection_result["detected"]
+    state["standards_confidence"] = detection_result["confidence"]
+    state["standards_indicators"] = detection_result["indicators"]
+
+    if detection_result["detected"]:
+        logger.info(
+            f"[IDENTIFIER] Standards DETECTED (confidence={detection_result['confidence']:.2f}, "
+            f"indicators={len(detection_result['indicators'])})"
+        )
+    else:
+        logger.info("[IDENTIFIER] No standards detected - will skip Phase 3 deep enrichment")
+
+    state["current_step"] = "enrich_with_standards"
+    return state
+
+
+# ============================================================================
 # STANDARDS RAG ENRICHMENT NODE (BATCH OPTIMIZED)
 # ============================================================================
 
@@ -663,12 +713,14 @@ def enrich_with_standards_node(state: InstrumentIdentifierState) -> InstrumentId
         # - All products processed in parallel
         # - Significant time savings vs sequential processing
         # =====================================================
+        standards_detected = state.get("standards_detected", True)  # Default True for safety
         result = run_optimized_parallel_enrichment(
             items=all_items,
             user_input=user_input,
             session_id=state.get("session_id", "identifier-opt-parallel"),
             domain_context=None,
             safety_requirements=None,
+            standards_detected=standards_detected,  # NEW: Pass detection flag
             max_parallel_products=5  # Process up to 5 products simultaneously
         )
         
@@ -785,13 +837,15 @@ def create_instrument_identifier_workflow() -> StateGraph:
     """
     Create the Instrument Identifier Workflow.
 
-    This is a simplified 3-node workflow that ONLY identifies instruments/accessories
+    This is a simplified 4-node workflow that ONLY identifies instruments/accessories
     and presents them for user selection. It does NOT perform product search.
 
     Flow:
     1. Initial Intent Classification
     2. Instrument/Accessory Identification (with sample_input generation)
-    3. Format Selection List
+    2.5. Standards Detection (NEW - conditional enrichment)
+    3. Standards RAG Enrichment (CONDITIONAL based on detection)
+    4. Format Selection List
 
     After this workflow completes, user selects an item, and the sample_input
     is routed to the SOLUTION workflow for product search.
@@ -799,19 +853,21 @@ def create_instrument_identifier_workflow() -> StateGraph:
 
     workflow = StateGraph(InstrumentIdentifierState)
 
-    # Add 4 nodes (including Standards RAG enrichment)
+    # Add 5 nodes (including NEW Standards Detection and Standards RAG enrichment)
     workflow.add_node("classify_intent", classify_initial_intent_node)
     workflow.add_node("identify_items", identify_instruments_and_accessories_node)
-    workflow.add_node("enrich_with_standards", enrich_with_standards_node)  # NEW: Standards RAG
+    workflow.add_node("detect_standards", detect_standards_requirements_node)  # NEW: Standards Detection
+    workflow.add_node("enrich_with_standards", enrich_with_standards_node)  # Standards RAG enrichment
     workflow.add_node("format_list", format_selection_list_node)
 
     # Set entry point
     workflow.set_entry_point("classify_intent")
 
-    # Add edges - linear flow with Standards RAG enrichment
+    # Add edges - linear flow with standards detection and conditional enrichment
     workflow.add_edge("classify_intent", "identify_items")
-    workflow.add_edge("identify_items", "enrich_with_standards")  # NEW: Route to Standards RAG
-    workflow.add_edge("enrich_with_standards", "format_list")  # NEW: Then to formatting
+    workflow.add_edge("identify_items", "detect_standards")  # NEW: Route to Standards Detection
+    workflow.add_edge("detect_standards", "enrich_with_standards")  # NEW: Route to Standards RAG
+    workflow.add_edge("enrich_with_standards", "format_list")  # Then to formatting
     workflow.add_edge("format_list", END)  # WORKFLOW ENDS HERE - waits for user selection
 
     return workflow
