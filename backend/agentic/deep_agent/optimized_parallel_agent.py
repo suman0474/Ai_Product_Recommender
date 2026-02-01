@@ -169,6 +169,9 @@ def extract_user_specs_with_shared_llm(
 
 LLM_SPECS_PROMPT = _OPT_PARALLEL_PROMPTS["LLM_SPECS"]
 
+# FIX: Hard limit to prevent specification explosion
+MAX_SPECS_PER_ITEM = 60
+
 
 def generate_llm_specs_with_shared_llm(
     product_type: str,
@@ -227,7 +230,8 @@ def generate_llm_specs_with_shared_llm(
         # =====================================================================
         # ITERATIVE LOOP: Continue until minimum is reached
         # =====================================================================
-        while len(all_specs) < min_specs and iteration < max_iterations:
+        # FIX: Add MAX_SPECS_PER_ITEM check to prevent explosion
+        while len(all_specs) < min_specs and iteration < max_iterations and len(all_specs) < MAX_SPECS_PER_ITEM:
             iteration += 1
             specs_needed = min_specs - len(all_specs) + 5  # Request a few extra
             
@@ -240,7 +244,14 @@ def generate_llm_specs_with_shared_llm(
 Previous specifications already generated:
 {existing_keys}
 
-Generate {specs_needed} NEW and DIFFERENT specifications not in the list above.
+Generate {specs_needed} additional REALISTIC technical specifications not in the list above.
+
+IMPORTANT: Only include specifications that:
+1. Have concrete, measurable values (not "Not specified" or "N/A")
+2. Are technically relevant to {product_type}
+3. Follow standard industry naming conventions
+4. DO NOT include abstract, philosophical, or nonsensical specifications
+
 Focus on:
 - Performance specifications (accuracy, repeatability, response time)
 - Environmental specifications (temperature range, humidity, IP rating)
@@ -254,7 +265,7 @@ Context: {context_value}
 Return ONLY valid JSON with this exact format:
 {{
     "specifications": {{
-        "new_spec_key": {{"value": "spec_value", "confidence": 0.7}}
+        "specification_key": {{"value": "concrete_value", "confidence": 0.7}}
     }}
 }}"""
             
@@ -275,11 +286,12 @@ Return ONLY valid JSON with this exact format:
                     iter_result = json.loads(json_match.group())
                     iter_specs = iter_result.get("specifications", {})
                     clean_iter_specs = _clean_and_flatten_specs(iter_specs)
-                    
-                    # Add only new specs
+
+                    # Add only new specs with validation
                     new_count = 0
                     for key, value in clean_iter_specs.items():
-                        if key not in all_specs:
+                        # FIX: Validate key before adding
+                        if key not in all_specs and _is_valid_spec_key(key):
                             all_specs[key] = value
                             new_count += 1
                     
@@ -308,6 +320,37 @@ Return ONLY valid JSON with this exact format:
     except Exception as e:
         logger.error(f"[LLM_SPECS_ITER] Generation failed for {product_type}: {e}")
         return {"specifications": {}, "source": "llm_generated", "error": str(e)}
+
+
+def _is_valid_spec_key(key: str) -> bool:
+    """Filter out nonsense or hallucinated keys with STRICT validation."""
+    if not key or len(key) > 80:  # Increased slightly for valid long keys
+        return False
+
+    key_lower = key.lower()
+
+    # FIX: Detect recursive/repetitive patterns
+    if 'self-self-' in key_lower or key_lower.count('self-') > 3:
+        return False
+
+    # FIX: Detect hallucinated protection keys
+    hallucination_patterns = [
+        "loss_of_ambition", "loss_of_appetite", "loss_of_calm",
+        "loss_of_creativity", "loss_of_desire", "loss_of_emotion",
+        "loss_of_feeling", "loss_of_hope", "loss_of_imagination",
+        "loss_of_passion", "loss_of_peace", "loss_of_purpose",
+        "protection_against_loss_of_", "cable_tray_cable_protection_against_loss"
+    ]
+    if any(pattern in key_lower for pattern in hallucination_patterns):
+        return False
+
+    # Existing validation
+    invalid_terms = ["new spec", "new_spec", "specification", "generated",
+                     "unknown", "item_", "spec_", "not specified"]
+    if any(term in key_lower for term in invalid_terms):
+        return False
+
+    return True
 
 
 def _clean_and_flatten_specs(raw_specs: Dict[str, Any]) -> Dict[str, Any]:
@@ -340,13 +383,18 @@ def _clean_and_flatten_specs(raw_specs: Dict[str, Any]) -> Dict[str, Any]:
         else:
             clean_specs[key] = {"value": str(value), "confidence": 0.7}
     
-    # Filter out N/A values
-    clean_specs = {
-        k: v for k, v in clean_specs.items()
-        if v.get("value") and str(v.get("value")).lower() not in ["null", "none", "n/a", ""]
-    }
-    
-    return clean_specs
+    # Filter out N/A values and invalid keys
+    final_specs = {}
+    for k, v in clean_specs.items():
+        # FIX: Validate key to prevent hallucinations
+        if not _is_valid_spec_key(k):
+            continue
+
+        val_str = str(v.get("value", "")).lower()
+        if val_str and val_str not in ["null", "none", "n/a", "", "not specified", "unknown"]:
+            final_specs[k] = v
+
+    return final_specs
 
 
 # =============================================================================
@@ -406,22 +454,30 @@ def process_single_product(
 # DEDUPLICATION (Same as parallel_specs_enrichment.py)
 # =============================================================================
 
+def _normalize_spec_key(key: str) -> str:
+    """Normalize key for deduplication."""
+    return key.strip().lower().replace(" ", "_").replace("-", "_")
+
+
 def deduplicate_and_merge_specifications(
     user_specs: Dict[str, Any],
     llm_specs: Dict[str, Any],
     standards_specs: Dict[str, Any]
 ) -> Dict[str, SpecificationSource]:
     """
-    Merge specifications from 3 sources with deduplication.
-    
+    Merge specifications from 3 sources with KEY DEDUPLICATION.
+
     Priority: user_specified > standards > llm_generated
     """
     merged: Dict[str, SpecificationSource] = {}
+    seen_keys = set()  # FIX: Track normalized keys to prevent duplicates
     timestamp = datetime.now().isoformat()
-    
+
     # First: User specs (mandatory)
     for key, value in user_specs.items():
-        if value and str(value).lower() not in ["null", "none", ""]:
+        norm_key = _normalize_spec_key(key)
+        if norm_key not in seen_keys and value and str(value).lower() not in ["null", "none", "", "not specified"]:
+            seen_keys.add(norm_key)
             merged[key] = SpecificationSource(
                 value=value,
                 source="user_specified",
@@ -432,9 +488,10 @@ def deduplicate_and_merge_specifications(
     
     # Second: Standards specs
     for key, value_data in standards_specs.items():
-        if key in merged:
+        norm_key = _normalize_spec_key(key)
+        if norm_key in seen_keys:
             continue
-        
+
         if isinstance(value_data, dict):
             value = value_data.get("value", str(value_data))
             confidence = value_data.get("confidence", 0.9)
@@ -443,8 +500,9 @@ def deduplicate_and_merge_specifications(
             value = value_data
             confidence = 0.9
             std_ref = None
-        
-        if value and str(value).lower() not in ["null", "none", "", "extracted value or null"]:
+
+        if value and str(value).lower() not in ["null", "none", "", "extracted value or null", "not specified", "not specified (standards)"]:
+            seen_keys.add(norm_key)
             merged[key] = SpecificationSource(
                 value=value,
                 source="standards",
@@ -455,17 +513,19 @@ def deduplicate_and_merge_specifications(
     
     # Third: LLM specs
     for key, value_data in llm_specs.items():
-        if key in merged:
+        norm_key = _normalize_spec_key(key)
+        if norm_key in seen_keys:
             continue
-        
+
         if isinstance(value_data, dict):
             value = value_data.get("value", str(value_data))
             confidence = value_data.get("confidence", 0.7)
         else:
             value = value_data
             confidence = 0.7
-        
-        if value and str(value).lower() not in ["null", "none", ""]:
+
+        if value and str(value).lower() not in ["null", "none", "", "not specified"]:
+            seen_keys.add(norm_key)
             merged[key] = SpecificationSource(
                 value=value,
                 source="llm_generated",

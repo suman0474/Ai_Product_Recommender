@@ -949,7 +949,8 @@ def _count_valid_specs(specs_dict: Dict[str, Any]) -> int:
     for key, value in specs_dict.items():
         if value is not None:
             str_value = str(value).lower().strip()
-            if str_value and str_value not in ["null", "none", "n/a", ""]:
+            # FIX: Filter "Not specified" and hallucinated values
+            if str_value and str_value not in ["null", "none", "n/a", "", "unknown", "not specified", "not specified (standards)"]:
                 count += 1
 
     return count
@@ -1296,68 +1297,70 @@ def _batch_extract_specs_for_items_parallel(
 ) -> Dict[int, Dict[str, Any]]:
     """
     Extract additional specs for multiple items FROM A SINGLE DOMAIN in parallel.
-    
+
     PARALLELIZATION:
     Instead of: 38 sequential LLM calls (one per item)
     Now: 8 parallel workers processing items concurrently
-    
+
     Args:
         items_info: List of item dicts with 'index', 'name', 'existing_specs', 'needed'
         domain: The standard domain to extract from
         document_content: Pre-loaded document content (cached I/O)
         max_workers: Number of parallel workers (default 8)
-    
+
     Returns:
         Dict mapping item index to extracted specs result
     """
     results = {}
-    
+
     if not items_info:
         return results
-    
+
     logger.info(f"[PARALLEL-ITEMS] Processing {len(items_info)} items for domain '{domain}' with {max_workers} workers...")
-    
+
     def extract_for_single_item(item_info: Dict[str, Any]) -> tuple:
         """Worker function to extract specs for one item."""
         item_idx = item_info.get("index", -1)
         item_name = item_info.get("name", f"Item {item_idx}")
-        
+
         try:
             logger.info(f"[ITERATIVE] Extracting additional specs from domain: {domain}")
-            
+
             result = _extract_additional_specs_from_domain(
                 user_requirement=item_name,
                 domain=domain,
                 existing_specs=item_info.get("existing_specs", {}),
                 specs_needed=item_info.get("needed", 30)
             )
-            
+
             new_specs = result.get("specifications", {})
             logger.info(f"[ITERATIVE] Domain {domain}: Found {len(new_specs)} new specs")
-            
+
             return (item_idx, result)
-            
+
         except Exception as e:
             logger.error(f"[PARALLEL-ITEMS] Error extracting specs for '{item_name}' from {domain}: {e}")
             return (item_idx, {"specifications": {}, "constraints": [], "error": str(e)})
-    
-    # Execute parallel extraction using ThreadPoolExecutor
-    with ThreadPoolExecutor(max_workers=min(max_workers, len(items_info))) as executor:
-        future_to_item = {
-            executor.submit(extract_for_single_item, item): item 
-            for item in items_info
-        }
-        
-        for future in as_completed(future_to_item):
-            item = future_to_item[future]
-            try:
-                idx, result = future.result()
-                results[idx] = result
-            except Exception as exc:
-                item_idx = item.get("index", -1)
-                logger.error(f"[PARALLEL-ITEMS] Exception for item index {item_idx}: {exc}")
-                results[item_idx] = {"specifications": {}, "constraints": [], "error": str(exc)}
-    
+
+    # FIX: Use global executor to prevent nested ThreadPoolExecutor deadlock
+    from agentic.global_executor_manager import get_global_executor
+    executor = get_global_executor()
+
+    future_to_item = {
+        executor.submit(extract_for_single_item, item): item
+        for item in items_info
+    }
+
+    for future in as_completed(future_to_item):
+        item = future_to_item[future]
+        try:
+            idx, result = future.result()
+            results[idx] = result
+        except Exception as exc:
+            item_idx = item.get("index", -1)
+            logger.error(f"[PARALLEL-ITEMS] Exception for item index {item_idx}: {exc}")
+            results[item_idx] = {"specifications": {}, "constraints": [], "error": str(exc)}
+
     logger.info(f"[PARALLEL-ITEMS] Completed parallel extraction for {len(results)} items from domain '{domain}'")
     return results
 

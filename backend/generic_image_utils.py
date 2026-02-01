@@ -57,6 +57,10 @@ _pending_requests: Dict[str, threading.Event] = {}  # Track pending requests
 _pending_results: Dict[str, Any] = {}  # Store results for pending requests
 _pending_lock = threading.Lock()
 
+# FIX: Global generation cache to prevent duplicate generation across sessions
+_global_generation_cache: Dict[str, float] = {}  # product_type -> last_gen_timestamp
+_CACHE_EXPIRY_SECONDS = 3600  # 1 hour
+
 # FIX #3: Rate limiting throttling - prevents thundering herd
 _last_request_time = 0  # Timestamp of last LLM request
 _throttle_lock = threading.Lock()
@@ -797,6 +801,26 @@ def fetch_generic_product_image(product_type: str) -> Optional[Dict[str, Any]]:
     # Normalize product type for deduplication
     normalized_type = product_type.strip().lower().replace(" ", "").replace("_", "").replace("-", "")
 
+    # FIX: Check global generation cache first to prevent duplicate generation
+    global _global_generation_cache
+    with _generation_lock:
+        if normalized_type in _global_generation_cache:
+            last_gen = _global_generation_cache[normalized_type]
+            if time.time() - last_gen < _CACHE_EXPIRY_SECONDS:
+                logger.info(f"[FETCH] Global cache: '{product_type}' generated recently, checking Azure...")
+                # Already generated recently, try Azure cache
+                azure_image = get_generic_image_from_azure(product_type)
+                if azure_image:
+                    backend_url = f"/api/images/{azure_image.get('azure_blob_path', '')}"
+                    return {
+                        'url': backend_url,
+                        'product_type': product_type,
+                        'source': azure_image.get('source', 'gemini_imagen'),
+                        'cached': True,
+                        'generation_method': azure_image.get('generation_method', 'llm'),
+                        'from_global_cache': True
+                    }
+
     # Step 1: Check Azure Blob Storage for cached image (exact match)
     azure_image = get_generic_image_from_azure(product_type)
     if azure_image:
@@ -996,6 +1020,10 @@ def fetch_generic_product_image(product_type: str) -> Optional[Dict[str, Any]]:
     logger.info(f"[FETCH] Cache miss for '{product_type}', generating image with Gemini Imagen 4.0...")
 
     try:
+        # FIX: Record generation attempt in global cache
+        with _generation_lock:
+            _global_generation_cache[normalized_type] = time.time()
+
         generated_image_data = _generate_image_with_llm(product_type)
 
         if generated_image_data:
