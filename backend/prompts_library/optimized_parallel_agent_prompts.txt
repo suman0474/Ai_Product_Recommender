@@ -1,0 +1,101 @@
+# =============================================================================
+# OPTIMIZED PARALLEL AGENT PROMPTS
+# =============================================================================
+# SOURCE FILE: backend/agentic/deep_agent/optimized_parallel_agent.py
+# CONTAINS: USER_SPECS, LLM_SPECS
+# =============================================================================
+
+=== PROMPT: USER_SPECS ===
+PURPOSE: Extracts only explicitly stated specifications from user input
+
+You are a specification extractor. Extract ONLY explicitly stated specifications.
+
+CRITICAL: Extract ONLY what is explicitly stated - do NOT infer or assume anything.
+
+USER INPUT:
+{user_input}
+
+PRODUCT TYPE: {product_type}
+
+STANDARD SPECIFICATION KEYS TO USE:
+- accuracy, pressure_range, temperature_range, process_temperature
+- output_signal, supply_voltage, protection_rating
+- hazardous_area_approval, sil_rating
+- material_wetted, material_housing, process_connection
+- response_time, communication_protocol, flow_range, level_range, display, mounting
+
+Return ONLY valid JSON:
+{{
+    "extracted_specifications": {{
+        "specification_key": "exact value from user input"
+    }},
+    "confidence": 0.0-1.0
+}}
+
+Return empty specifications object if nothing is explicitly mentioned.
+
+
+=== PROMPT: LLM_SPECS ===
+PURPOSE: Generates comprehensive technical specifications for a product type
+
+You are an expert industrial instrumentation engineer. Generate EXACTLY 35 or MORE
+comprehensive, distinct technical specifications for the given product in THIS FIRST RESPONSE.
+
+CRITICAL INSTRUCTION: You MUST return AT LEAST 35 different specifications in your response.
+Do NOT return partial results. Generate ALL 35+ specifications NOW.
+
+PRODUCT TYPE: {product_type}
+CATEGORY: {category}
+CONTEXT: {context}
+
+REQUIRED SPECIFICATION CATEGORIES (minimum 5 specifications per category):
+
+1. PERFORMANCE & ACCURACY SPECIFICATIONS:
+   - accuracy, repeatability, rangeability, linearity, hysteresis
+   - resolution, sensitivity, stability, drift
+
+2. OPERATING RANGE SPECIFICATIONS:
+   - temperature_range, pressure_range, flow_range, level_range
+   - process_temperature, ambient_temperature, humidity_range
+   - viscosity_range, density_range
+
+3. PHYSICAL & DIMENSIONAL SPECIFICATIONS:
+   - dimensions, weight, housing_material, wetted_material
+   - material_housing, material_wetted, material_seals, material_diaphragm
+   - mounting_orientation, pipe_size, flange_rating
+
+4. ELECTRICAL & SIGNAL SPECIFICATIONS:
+   - output_signal, supply_voltage, power_consumption, current_consumption
+   - communication_protocol, display_type, signal_processing
+   - cable_entry, electrical_connection, wiring_configuration
+
+5. ENVIRONMENTAL & PROTECTION SPECIFICATIONS:
+   - protection_rating, ingress_protection, ambient_conditions
+   - enclosure_type, weatherproofing, vibration_resistance
+   - shock_resistance, emi_immunity
+
+6. COMPLIANCE & CERTIFICATION SPECIFICATIONS:
+   - sil_rating, hazardous_area_approval, atex_rating, iecex_rating
+   - certifications, standards_compliance, regional_approvals
+   - ce_marking, ul_listing, csa_approval
+
+7. INSTALLATION & MAINTENANCE SPECIFICATIONS:
+   - process_connection, installation_type, mounting_hardware
+   - calibration_interval, maintenance_interval, service_life
+   - response_time, warm_up_time, start_up_time
+
+8. ADDITIONAL PRODUCT-SPECIFIC SPECIFICATIONS:
+   - Any other relevant technical specifications for this product type
+
+CRITICAL: Return ONLY clean technical values - NO descriptions, NO explanations.
+Each specification should be a distinct technical parameter with its value.
+
+Return ONLY valid JSON with FLAT key-value structure containing 35+ specifications:
+{{
+    "specifications": {{
+        "accuracy": {{"value": "±0.1%", "confidence": 0.8}},
+        "output_signal": {{"value": "4-20mA, HART", "confidence": 0.9}},
+        "temperature_range": {{"value": "-40°C to 85°C", "confidence": 0.85}},
+        ... (continue for 35+ total specifications)
+    }}
+}}

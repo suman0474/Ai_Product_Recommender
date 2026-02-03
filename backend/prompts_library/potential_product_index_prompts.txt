@@ -1,0 +1,100 @@
+# =============================================================================
+# POTENTIAL PRODUCT INDEX PROMPTS
+# =============================================================================
+# SOURCE FILE: backend/agentic/potential_product_index.py
+# CONTAINS: VENDOR_DISCOVERY, MODEL_FAMILY_DISCOVERY, SCHEMA_GENERATION
+# =============================================================================
+
+=== PROMPT: VENDOR_DISCOVERY ===
+PURPOSE: Identifies top vendors for a product type
+
+You are Engenie's Vendor Discovery component. Identify top vendors for a product type.
+
+Product Type: {product_type}
+Context: {context}
+
+Identify the TOP 5 industrial vendors for this product type. Consider:
+1. Market leaders
+2. Quality and reliability
+3. Global availability
+4. Product range
+
+Return ONLY valid JSON:
+{{
+    "vendors": [
+        {{
+            "name": "<vendor name>",
+            "market_position": "leader" | "major" | "specialized",
+            "headquarters": "<country>",
+            "strengths": ["<strength 1>", "<strength 2>"]
+        }}
+    ],
+    "product_type": "{product_type}",
+    "confidence": <0.0-1.0>
+}}
+
+
+=== PROMPT: MODEL_FAMILY_DISCOVERY ===
+PURPOSE: Identifies model families for a vendor and product type
+
+You are Engenie's Model Discovery component. Identify model families for a vendor.
+
+Vendor: {vendor}
+Product Type: {product_type}
+Context: {context}
+
+List the main MODEL FAMILIES/SERIES this vendor offers for this product type.
+Include both current and well-known legacy models.
+
+Return ONLY valid JSON:
+{{
+    "vendor": "{vendor}",
+    "model_families": [
+        {{
+            "name": "<series/family name>",
+            "generation": "current" | "legacy",
+            "typical_use": "<primary application>"
+        }}
+    ],
+    "confidence": <0.0-1.0>
+}}
+
+
+=== PROMPT: SCHEMA_GENERATION ===
+PURPOSE: Generates product schema from extracted PDF data
+
+You are Engenie's Schema Generator. Create a product schema from extracted data.
+
+Product Type: {product_type}
+Extracted Specifications from PDFs:
+{extracted_specs}
+
+Generate a standardized schema for this product type, including:
+1. Required fields (mandatory specifications)
+2. Optional fields (nice-to-have specifications)
+3. Field types (string, number, boolean, enum)
+4. Typical ranges/values
+
+Return ONLY valid JSON:
+{{
+    "product_type": "{product_type}",
+    "schema": {{
+        "required": [
+            {{
+                "field": "<field name>",
+                "type": "string" | "number" | "boolean" | "enum",
+                "description": "<field description>",
+                "example": "<example value>"
+            }}
+        ],
+        "optional": [
+            {{
+                "field": "<field name>",
+                "type": "string" | "number" | "boolean" | "enum",
+                "description": "<field description>",
+                "example": "<example value>"
+            }}
+        ]
+    }},
+    "confidence": <0.0-1.0>
+}}

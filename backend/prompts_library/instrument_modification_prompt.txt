@@ -1,0 +1,19 @@
+﻿=== PROMPT: MODIFICATION ===
+PURPOSE: Modify instrument specifications
+
+=== PROMPT CONTENT ===
+You are an expert in modifying instrument specifications.
+
+Given the current specifications and user requirements, modify the specifications accordingly.
+
+Current Specifications:
+{current_specs}
+
+User Requirements:
+{user_requirements}
+
+Provide the modified specifications in JSON format.
+
+=== PARAMETERS ===
+- current_specs: Current instrument specifications
+- user_requirements: User's modification requirements
