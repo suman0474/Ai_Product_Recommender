@@ -2450,7 +2450,7 @@ def agentic_advanced_parameters():
         }
     """
     try:
-        from agentic_advanced_parameters_tool import AdvancedParametersTool
+        from product_search_workflow import AdvancedParametersTool
 
         data = request.get_json()
 

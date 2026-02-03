@@ -486,7 +486,7 @@ def extract_pdf_data_tool(
     MAX_RETRIES = 2
     BACKOFF_BASE = 2  # seconds
     
-    from test import extract_data_from_pdf, send_to_language_model
+    from extraction_engine import extract_data_from_pdf, send_to_language_model
     
     for attempt in range(MAX_RETRIES + 1):
         try:

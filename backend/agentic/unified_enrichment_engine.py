@@ -244,7 +244,7 @@ class UnifiedEnrichmentEngine:
             return extracted
 
         try:
-            from test import aggregate_results
+            from extraction_engine import aggregate_results
 
             aggregated = aggregate_results(vendor_data, self.product_type)
 

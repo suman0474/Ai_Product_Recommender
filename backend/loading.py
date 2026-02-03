@@ -24,7 +24,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-from test import (
+from extraction_engine import (
     extract_data_from_pdf,
     send_to_language_model,
     aggregate_results,

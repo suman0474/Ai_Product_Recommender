@@ -489,7 +489,7 @@ try:
     logging.info("Resource Monitoring blueprint registered at /api/resources")
 except ImportError:
     logging.warning("Resource Monitoring API not available")
-from test import (
+from extraction_engine import (
     extract_data_from_pdf,
     send_to_language_model,
     aggregate_results,
