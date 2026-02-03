@@ -26,6 +26,7 @@ from serpapi import GoogleSearch
 import threading
 import csv
 from fuzzywuzzy import fuzz, process
+import uuid
 
 from functools import wraps
 # Suppress noisy Azure SDK logs
@@ -36,11 +37,12 @@ logging.getLogger("azure.identity").setLevel(logging.WARNING)
 from googleapiclient.discovery import build
 
 # --- NEW IMPORTS FOR AUTHENTICATION ---
-from auth_models import db, User, Log
+from auth_models import db, User, Log, StandardsDocument
 from auth_utils import hash_password, check_password
 
 # --- Cosmos DB Project Management ---
 from cosmos_project_manager import cosmos_project_manager
+from agentic.auth_decorators import login_required, admin_required
 
 # --- LLM CHAINING IMPORTS ---
 from langchain_core.prompts import ChatPromptTemplate
@@ -151,10 +153,290 @@ Session(app)
 db.init_app(app)
 
 
+@app.route('/api/standards/upload', methods=['POST'])
+@login_required
+def upload_user_standards_document():
+    try:
+        from file_extraction_utils import extract_text_from_file
+        from agentic.vector_store import get_vector_store
 
-# --- Authentication Decorators ---
-from agentic.auth_decorators import login_required, admin_required
-logging.info("Authentication decorators imported")
+        if 'file' not in request.files:
+            return jsonify({"success": False, "error": "No file provided"}), 400
+
+        file = request.files['file']
+        if not file or not file.filename:
+            return jsonify({"success": False, "error": "No file selected"}), 400
+
+        user_id = session.get('user_id')
+        if not user_id:
+            return jsonify({"success": False, "error": "Unauthorized"}), 401
+
+        document_id = uuid.uuid4().hex
+        filename = secure_filename(file.filename)
+        content_type = getattr(file, 'content_type', None)
+
+        file_bytes = file.read()
+        if not file_bytes:
+            return jsonify({"success": False, "error": "Empty file"}), 400
+
+        # Save initial registry row
+        doc_row = StandardsDocument(
+            id=document_id,
+            user_id=int(user_id),
+            filename=filename,
+            content_type=content_type,
+            file_type=(filename.split('.')[-1].lower() if '.' in filename else None),
+            raw_blob_path=None,
+            extracted_blob_path=None,
+            status='uploaded'
+        )
+        db.session.add(doc_row)
+        db.session.commit()
+
+        # Upload raw file to Azure Blob
+        raw_file_id = azure_blob_file_manager.upload_to_azure(
+            file_bytes,
+            {
+                'collection_type': 'user_standards_raw',
+                'filename': filename,
+                'content_type': content_type or 'application/octet-stream',
+                'user_id': str(user_id),
+                'document_id': document_id
+            }
+        )
+        doc_row.raw_blob_path = raw_file_id
+        db.session.commit()
+
+        # Extract text
+        extraction = extract_text_from_file(file_bytes, filename)
+        if not extraction.get('success'):
+            doc_row.status = 'failed'
+            doc_row.error_message = f"Extraction failed for file_type={extraction.get('file_type')}"
+            db.session.commit()
+            return jsonify({
+                "success": False,
+                "error": "Could not extract text from file",
+                "file_type": extraction.get('file_type'),
+                "document_id": document_id
+            }), 400
+
+        extracted_text = extraction.get('extracted_text', '')
+
+        # Upload extracted text as a blob (so we can re-embed without re-reading raw)
+        extracted_file_id = azure_blob_file_manager.upload_to_azure(
+            extracted_text.encode('utf-8'),
+            {
+                'collection_type': 'user_standards_extracted',
+                'filename': 'extracted.txt',
+                'content_type': 'text/plain',
+                'user_id': str(user_id),
+                'document_id': document_id
+            }
+        )
+        doc_row.extracted_blob_path = extracted_file_id
+        db.session.commit()
+
+        # Upsert into vector store in the existing "standards" collection with user_id filter
+        store = get_vector_store()
+        vs_result = store.add_document(
+            collection_type='standards',
+            content=extracted_text,
+            metadata={
+                'filename': filename,
+                'standard_type': 'user_uploaded',
+                'user_id': int(user_id),
+                'document_id': document_id,
+                'raw_blob_path': raw_file_id,
+                'extracted_blob_path': extracted_file_id
+            },
+            doc_id=document_id
+        )
+
+        if not vs_result.get('success'):
+            doc_row.status = 'failed'
+            doc_row.error_message = f"Vector store add_document failed: {vs_result.get('error', 'unknown error')}"
+            db.session.commit()
+            return jsonify({
+                "success": False,
+                "error": "Failed to index document into vector store",
+                "document_id": document_id
+            }), 500
+
+        # Update registry
+        doc_row.status = 'embedded'
+        doc_row.character_count = int(extraction.get('character_count') or len(extracted_text))
+        db.session.commit()
+
+        return jsonify({
+            "success": True,
+            "document_id": document_id,
+            "filename": filename,
+            "file_type": extraction.get('file_type'),
+            "character_count": doc_row.character_count,
+            "status": doc_row.status
+        }), 200
+
+    except Exception as e:
+        logging.exception("User standards upload failed")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route('/api/standards/list', methods=['GET'])
+@login_required
+def list_user_standards_documents():
+    user_id = session.get('user_id')
+    if not user_id:
+        return jsonify({"success": False, "error": "Unauthorized"}), 401
+
+    docs = (
+        StandardsDocument.query
+        .filter_by(user_id=int(user_id))
+        .order_by(StandardsDocument.created_at.desc())
+        .all()
+    )
+
+    return jsonify({
+        "success": True,
+        "documents": [
+            {
+                "document_id": d.id,
+                "filename": d.filename,
+                "content_type": d.content_type,
+                "file_type": d.file_type,
+                "status": d.status,
+                "character_count": d.character_count,
+                "error_message": d.error_message,
+                "created_at": d.created_at.isoformat() if d.created_at else None,
+                "updated_at": d.updated_at.isoformat() if d.updated_at else None
+            }
+            for d in docs
+        ]
+    }), 200
+
+
+@app.route('/api/standards/<document_id>', methods=['DELETE'])
+@login_required
+def delete_user_standards_document(document_id: str):
+    try:
+        from agentic.vector_store import get_vector_store
+
+        user_id = session.get('user_id')
+        if not user_id:
+            return jsonify({"success": False, "error": "Unauthorized"}), 401
+
+        doc_row = StandardsDocument.query.filter_by(id=document_id, user_id=int(user_id)).first()
+        if not doc_row:
+            return jsonify({"success": False, "error": "Document not found"}), 404
+
+        # Delete vectors (all chunks by doc_id)
+        store = get_vector_store()
+        store.delete_document('standards', document_id)
+
+        # Best-effort delete blobs (query-based delete is fuzzy; use blob_path if available)
+        if doc_row.raw_blob_path:
+            azure_blob_file_manager.delete_file('user_standards_raw', {'blob_path': doc_row.raw_blob_path})
+        if doc_row.extracted_blob_path:
+            azure_blob_file_manager.delete_file('user_standards_extracted', {'blob_path': doc_row.extracted_blob_path})
+
+        db.session.delete(doc_row)
+        db.session.commit()
+
+        return jsonify({"success": True, "document_id": document_id, "message": "Deleted"}), 200
+
+    except Exception as e:
+        logging.exception("Failed to delete user standards document")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route('/api/standards/<document_id>/reindex', methods=['POST'])
+@login_required
+def reindex_user_standards_document(document_id: str):
+    try:
+        from agentic.vector_store import get_vector_store
+        from file_extraction_utils import extract_text_from_file
+
+        user_id = session.get('user_id')
+        if not user_id:
+            return jsonify({"success": False, "error": "Unauthorized"}), 401
+
+        doc_row = StandardsDocument.query.filter_by(id=document_id, user_id=int(user_id)).first()
+        if not doc_row:
+            return jsonify({"success": False, "error": "Document not found"}), 404
+
+        doc_row.status = 'uploaded'
+        doc_row.error_message = None
+        db.session.commit()
+
+        # Load raw file bytes from Azure
+        if not doc_row.raw_blob_path:
+            return jsonify({"success": False, "error": "Raw blob path missing"}), 400
+
+        raw_bytes = azure_blob_file_manager.get_file_from_azure('user_standards_raw', {'blob_path': doc_row.raw_blob_path})
+        if not raw_bytes:
+            return jsonify({"success": False, "error": "Raw file not found in storage"}), 404
+
+        # Re-extract
+        extraction = extract_text_from_file(raw_bytes, doc_row.filename)
+        if not extraction.get('success'):
+            doc_row.status = 'failed'
+            doc_row.error_message = f"Extraction failed for file_type={extraction.get('file_type')}"
+            db.session.commit()
+            return jsonify({"success": False, "error": "Could not extract text from file"}), 400
+
+        extracted_text = extraction.get('extracted_text', '')
+
+        # Upload extracted text
+        if doc_row.extracted_blob_path:
+            # upload_to_azure generates a new file_id; update our registry accordingly
+            extracted_file_id = azure_blob_file_manager.upload_to_azure(
+                extracted_text.encode('utf-8'),
+                {
+                    'collection_type': 'user_standards_extracted',
+                    'filename': 'extracted.txt',
+                    'content_type': 'text/plain',
+                    'user_id': str(user_id),
+                    'document_id': document_id
+                }
+            )
+            doc_row.extracted_blob_path = extracted_file_id
+            db.session.commit()
+
+        # Delete and re-add vectors
+        store = get_vector_store()
+        store.delete_document('standards', document_id)
+        vs_result = store.add_document(
+            collection_type='standards',
+            content=extracted_text,
+            metadata={
+                'filename': doc_row.filename,
+                'standard_type': 'user_uploaded',
+                'user_id': int(user_id),
+                'document_id': document_id,
+                'raw_blob_path': doc_row.raw_blob_path,
+                'extracted_blob_path': doc_row.extracted_blob_path
+            },
+            doc_id=document_id
+        )
+        if not vs_result.get('success'):
+            doc_row.status = 'failed'
+            doc_row.error_message = f"Vector store add_document failed: {vs_result.get('error', 'unknown error')}"
+            db.session.commit()
+            return jsonify({"success": False, "error": "Failed to index document into vector store"}), 500
+
+        doc_row.status = 'embedded'
+        doc_row.character_count = int(extraction.get('character_count') or len(extracted_text))
+        db.session.commit()
+
+        return jsonify({
+            "success": True,
+            "document_id": document_id,
+            "status": doc_row.status,
+            "character_count": doc_row.character_count
+        }), 200
+
+    except Exception as e:
+        logging.exception("Failed to reindex user standards document")
+        return jsonify({"success": False, "error": str(e)}), 500
 
 # --- Initialize Rate Limiting ---
 from rate_limiter import init_limiter

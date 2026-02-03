@@ -531,7 +531,7 @@ class IntentClassificationRoutingAgent:
             workflow_hint = None
         
         # =====================================================================
-        # STEP 3: CHECK WORKFLOW LOCK (with relevance check)
+        # STEP 3: CHECK WORKFLOW LOCK (with session type differentiation)
         # =====================================================================
         current_workflow = self._memory.get_workflow(session_id)
         
@@ -542,37 +542,59 @@ class IntentClassificationRoutingAgent:
             self._memory.set_workflow(session_id, current_workflow)
         
         if current_workflow and not should_exit_workflow(query):
-            # CONSOLIDATION: Frontend is authoritative - respect the workflow lock
-            # Don't check relevance - if frontend says we're in a workflow, we stay in it
-            logger.info(f"[{self.name}] WORKFLOW LOCKED: Session in '{current_workflow}' (frontend authoritative)")
+            # FIX: Differentiate between main interface sessions and dedicated workflow sessions
+            # Main interface sessions (e.g., "main_Daman_DEFAULT") should allow free workflow switching
+            # Dedicated workflow sessions (e.g., "engenie_chat_1234567890") should stay locked
             
-            # Map workflow to target
-            workflow_map = {
-                "engenie_chat": WorkflowTarget.ENGENIE_CHAT,
-                "instrument_identifier": WorkflowTarget.INSTRUMENT_IDENTIFIER,
-                "solution": WorkflowTarget.SOLUTION_WORKFLOW
-            }
+            is_main_interface = session_id.startswith("main_")
             
-            target_workflow = workflow_map.get(current_workflow, WorkflowTarget.ENGENIE_CHAT)
-            
-            # Calculate time
-            end_time = datetime.now()
-            classification_time_ms = (end_time - start_time).total_seconds() * 1000
-            
-            return WorkflowRoutingResult(
-                query=query,
-                target_workflow=target_workflow,
-                intent="workflow_locked",
-                confidence=1.0,
-                reasoning=f"Session locked in {current_workflow} workflow (frontend authoritative)",
-                is_solution=(current_workflow == "solution"),
-                target_rag=None,
-                solution_indicators=[],
-                extracted_info={"workflow_locked": True, "current_workflow": current_workflow},
-                classification_time_ms=classification_time_ms,
-                timestamp=datetime.now().isoformat(),
-                reject_message=None
-            )
+            if is_main_interface:
+                # Main interface - allow re-classification for workflow switching
+                logger.info(
+                    f"[{self.name}] Main interface session detected (session: {session_id[:30]}...). "
+                    f"Previous workflow: '{current_workflow}'. Will re-classify to allow workflow switching."
+                )
+                # Clear the workflow lock to allow re-classification
+                self._memory.clear_workflow(session_id)
+                # Continue to classification steps below
+            else:
+                # Dedicated workflow session - respect the workflow lock
+                logger.info(
+                    f"[{self.name}] WORKFLOW LOCKED: Dedicated session in '{current_workflow}' "
+                    f"(session: {session_id[:30]}...)"
+                )
+                
+                # Map workflow to target
+                workflow_map = {
+                    "engenie_chat": WorkflowTarget.ENGENIE_CHAT,
+                    "instrument_identifier": WorkflowTarget.INSTRUMENT_IDENTIFIER,
+                    "solution": WorkflowTarget.SOLUTION_WORKFLOW
+                }
+                
+                target_workflow = workflow_map.get(current_workflow, WorkflowTarget.ENGENIE_CHAT)
+                
+                # Calculate time
+                end_time = datetime.now()
+                classification_time_ms = (end_time - start_time).total_seconds() * 1000
+                
+                return WorkflowRoutingResult(
+                    query=query,
+                    target_workflow=target_workflow,
+                    intent="workflow_locked",
+                    confidence=1.0,
+                    reasoning=f"Dedicated session locked in {current_workflow} workflow",
+                    is_solution=(current_workflow == "solution"),
+                    target_rag=None,
+                    solution_indicators=[],
+                    extracted_info={
+                        "workflow_locked": True, 
+                        "current_workflow": current_workflow,
+                        "session_type": "dedicated"
+                    },
+                    classification_time_ms=classification_time_ms,
+                    timestamp=datetime.now().isoformat(),
+                    reject_message=None
+                )
 
         # =====================================================================
         # STEP 3.5: FAST PATTERN CLASSIFICATION (Regex - Zero Latency)

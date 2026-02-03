@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useAuth } from "@/contexts/AuthContext";
-import { updateProfile } from "@/components/AIRecommender/api";
+import { deleteStandardsDocument, listStandardsDocuments, reindexStandardsDocument, StandardsDocumentRecord, updateProfile, uploadStandardsDocument } from "@/components/AIRecommender/api";
 import { useToast } from "@/components/ui/use-toast";
 import { Upload } from "lucide-react";
 
@@ -23,8 +23,11 @@ export function ProfileEditDialog({ open, onOpenChange }: ProfileEditDialogProps
     const [companyName, setCompanyName] = useState("");
     const [location, setLocation] = useState("");
     const [strategy, setStrategy] = useState("");
-    const [file, setFile] = useState<File | null>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
+
+    const [standardsDocs, setStandardsDocs] = useState<StandardsDocumentRecord[]>([]);
+    const [isStandardsLoading, setIsStandardsLoading] = useState(false);
+    const [standardsUploadFile, setStandardsUploadFile] = useState<File | null>(null);
 
     const [isLoading, setIsLoading] = useState(false);
     const { toast } = useToast();
@@ -38,22 +41,96 @@ export function ProfileEditDialog({ open, onOpenChange }: ProfileEditDialogProps
             setCompanyName(user.companyName || "");
             setLocation(user.location || "");
             setStrategy(user.strategyInterest || "");
-            setFile(null); // Reset file on open
+            setStandardsUploadFile(null);
+            if (fileInputRef.current) {
+                fileInputRef.current.value = '';
+            }
         }
     }, [open, user]);
 
+    useEffect(() => {
+        const loadStandards = async () => {
+            if (!open) return;
+            setIsStandardsLoading(true);
+            try {
+                const docs = await listStandardsDocuments();
+                setStandardsDocs(docs);
+            } catch (e: any) {
+                toast({
+                    title: "Error",
+                    description: e.message || "Failed to load standards documents",
+                    variant: "destructive",
+                });
+            } finally {
+                setIsStandardsLoading(false);
+            }
+        };
+        loadStandards();
+    }, [open, toast]);
+
     const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         if (e.target.files && e.target.files[0]) {
-            setFile(e.target.files[0]);
+            setStandardsUploadFile(e.target.files[0]);
         }
     };
 
     const removeFile = () => {
-        setFile(null);
+        setStandardsUploadFile(null);
         if (fileInputRef.current) {
             fileInputRef.current.value = '';
         }
     }
+
+    const handleStandardsUpload = async () => {
+        if (!standardsUploadFile) return;
+        setIsStandardsLoading(true);
+        try {
+            await uploadStandardsDocument(standardsUploadFile);
+            toast({
+                title: "Uploaded",
+                description: "Standards document uploaded and indexed.",
+            });
+            removeFile();
+            const docs = await listStandardsDocuments();
+            setStandardsDocs(docs);
+        } catch (e: any) {
+            toast({
+                title: "Error",
+                description: e.message || "Failed to upload standards document",
+                variant: "destructive",
+            });
+        } finally {
+            setIsStandardsLoading(false);
+        }
+    };
+
+    const handleStandardsDelete = async (documentId: string) => {
+        setIsStandardsLoading(true);
+        try {
+            await deleteStandardsDocument(documentId);
+            const docs = await listStandardsDocuments();
+            setStandardsDocs(docs);
+            toast({ title: "Deleted", description: "Standards document removed." });
+        } catch (e: any) {
+            toast({ title: "Error", description: e.message || "Delete failed", variant: "destructive" });
+        } finally {
+            setIsStandardsLoading(false);
+        }
+    };
+
+    const handleStandardsReindex = async (documentId: string) => {
+        setIsStandardsLoading(true);
+        try {
+            await reindexStandardsDocument(documentId);
+            const docs = await listStandardsDocuments();
+            setStandardsDocs(docs);
+            toast({ title: "Reindexed", description: "Standards document reprocessed." });
+        } catch (e: any) {
+            toast({ title: "Error", description: e.message || "Reindex failed", variant: "destructive" });
+        } finally {
+            setIsStandardsLoading(false);
+        }
+    };
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -66,10 +143,6 @@ export function ProfileEditDialog({ open, onOpenChange }: ProfileEditDialogProps
             formData.append('company_name', companyName);
             formData.append('location', location);
             formData.append('strategy_interest', strategy);
-
-            if (file) {
-                formData.append('document', file);
-            }
 
             // Using 'any' cast as API expects specific object shape but backend supports FormData
             await updateProfile(formData as any);
@@ -186,9 +259,9 @@ export function ProfileEditDialog({ open, onOpenChange }: ProfileEditDialogProps
                                         size="sm"
                                         className="absolute right-0 top-0 h-full px-3 text-muted-foreground hover:text-foreground transition-colors hover:bg-transparent transition-transform hover:scale-110 active:scale-95"
                                         onClick={() => fileInputRef.current?.click()}
-                                        title="Upload Document"
+                                        title="Upload Standards Document"
                                     >
-                                        <Upload className={`h-4 w-4 ${file ? "text-primary" : ""}`} />
+                                        <Upload className={`h-4 w-4 ${standardsUploadFile ? "text-primary" : ""}`} />
                                     </Button>
                                     <Input
                                         type="file"
@@ -197,12 +270,36 @@ export function ProfileEditDialog({ open, onOpenChange }: ProfileEditDialogProps
                                         onChange={handleFileChange}
                                     />
                                 </div>
-                                {file && (
+                                {standardsUploadFile && (
                                     <div className="flex items-center justify-between text-xs text-muted-foreground px-1">
-                                        <span>File: {file.name}</span>
-                                        <button type="button" onClick={removeFile} className="text-red-500 hover:text-red-700">Remove</button>
+                                        <span>File: {standardsUploadFile.name}</span>
+                                        <div className="flex items-center gap-3">
+                                            <button type="button" onClick={removeFile} className="text-red-500 hover:text-red-700">Remove</button>
+                                            <button type="button" onClick={handleStandardsUpload} className="text-[#0F6CBD] hover:text-[#064375]" disabled={isStandardsLoading}>Upload</button>
+                                        </div>
                                     </div>
                                 )}
+
+                                <div className="space-y-2">
+                                    <div className="text-xs text-muted-foreground px-1">
+                                        {isStandardsLoading ? "Loading standards..." : "Standards documents"}
+                                    </div>
+                                    <div className="space-y-1">
+                                        {standardsDocs.length === 0 && !isStandardsLoading && (
+                                            <div className="text-xs text-muted-foreground px-1">No standards uploaded</div>
+                                        )}
+                                        {standardsDocs.slice(0, 5).map((d) => (
+                                            <div key={d.documentId} className="flex items-center justify-between text-xs text-muted-foreground px-1">
+                                                <span className="truncate max-w-[210px]">{d.filename}</span>
+                                                <div className="flex items-center gap-2">
+                                                    <span className="text-[10px] uppercase tracking-wide">{d.status}</span>
+                                                    <button type="button" className="text-[#0F6CBD] hover:text-[#064375]" onClick={() => handleStandardsReindex(d.documentId)} disabled={isStandardsLoading}>Reindex</button>
+                                                    <button type="button" className="text-red-500 hover:text-red-700" onClick={() => handleStandardsDelete(d.documentId)} disabled={isStandardsLoading}>Delete</button>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
                             </div>
                         </div>
 

@@ -1,85 +1,108 @@
 """
-Cosmos DB Project Management Module
-Handles project storage using Cosmos DB for metadata and Azure Blob Storage for content.
-Replaces MongoProjectManager.
+Blob Storage Project Management Module
+Handles project storage using strictly Azure Blob Storage.
+Replaces CosmosDB implementation for pure folder-based storage.
+Structure: projects/{user_id}/{project_id}.json
 """
 import logging
 from datetime import datetime
 from typing import Dict, List, Optional, Any
 import json
 import uuid
-from azure.cosmos import PartitionKey
-from azure.cosmos.exceptions import CosmosHttpResponseError, CosmosResourceNotFoundError
+import urllib.parse
+from azure.core.exceptions import ResourceNotFoundError
+from azure.storage.blob import ContentSettings, BlobClient
 
-from cosmosdb_config import CosmosDBConnection, CosmosContainers
 from azure_blob_utils import azure_blob_file_manager
 
 class CosmosProjectManager:
-    """Manages project operations in Cosmos DB (Metadata) and Azure Blob Storage (Data)"""
+    """
+    Manages project operations using ONLY Azure Blob Storage.
+    Note: kept class name 'CosmosProjectManager' to maintain compatibility with main.py imports,
+    but internal implementation is pure Blob Storage.
+    """
     
     def __init__(self):
-        self.conn = CosmosDBConnection.get_instance()
-        self.client = self.conn.client
-        self.database_name = CosmosDBConnection.DATABASE_NAME
-        self.container_name = CosmosContainers.USER_PROJECTS
         self.logger = logging.getLogger(__name__)
         self.blob_manager = azure_blob_file_manager
         
-        self.container = None
-        if self.client:
-            self._initialize_container()
-        else:
-            self.logger.warning("Cosmos DB client not available. Project persistence will fail.")
+    @property
+    def container_client(self):
+        return self.blob_manager.container_client
 
-    def _initialize_container(self):
-        """Initialize database and container"""
-        try:
-            database = self.client.create_database_if_not_exists(id=self.database_name)
-            
-            # Partition Key: /user_id (Projects belong to users)
-            self.container = database.create_container_if_not_exists(
-                id=self.container_name,
-                partition_key=PartitionKey(path="/user_id")
-            )
-        except Exception as e:
-            self.logger.error(f"Failed to initialize Cosmos DB container: {e}")
+    @property
+    def base_path(self):
+        return self.blob_manager.base_path
+
+    def _get_project_blob_path(self, user_id: str, project_id: str) -> str:
+        """Construct the blob path: projects/{user_id}/{project_id}.json"""
+        # Ensure user_id is clean
+        safe_user_id = str(user_id).strip()
+        safe_project_id = str(project_id).strip()
+        return f"{self.base_path}/projects/{safe_user_id}/{safe_project_id}.json"
 
     def save_project(self, user_id: str, project_data: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Save or update a project.
-        Stores large JSON in Azure Blob, Metadata in Cosmos DB.
+        Save or update a project to Azure Blob Storage.
         """
         try:
-            if not self.container:
-                raise Exception("Cosmos DB container not initialized")
-
-            project_id = project_data.get('project_id')
             current_time = datetime.utcnow().isoformat()
             
-            # Ensure detected product type is used
-            project_name = (project_data.get('project_name') or '').strip()
+            project_id = project_data.get('project_id')
+            if not project_id:
+                project_id = str(uuid.uuid4())
+                is_new = True
+            else:
+                is_new = False
+
+            # Ensure we have essential metadata
+            project_name = (project_data.get('project_name') or 'Untitled Project').strip()
             detected_product_type = project_data.get('detected_product_type')
             incoming_product_type = (project_data.get('product_type') or '').strip()
-
+            
             if detected_product_type:
                 product_type = detected_product_type.strip()
             else:
-                # If incoming product_type exactly matches project_name, ignore it (legacy behavior)
                 if incoming_product_type and project_name and incoming_product_type.lower() == project_name.lower():
                     product_type = ''
                 else:
                     product_type = incoming_product_type
 
-            # Build complete project data for Blob storage
+            # Calculate counts for metadata
+            instruments_list = project_data.get('identified_instruments', [])
+            accessories_list = project_data.get('identified_accessories', [])
+            search_tabs = project_data.get('search_tabs', [])
+            conversations_count = project_data.get('user_interactions', {}).get('conversations_count', 0)
+
+            # Metadata to store on the Blob (for fast listing)
+            # Note: Azure Blob Metadata key nomenclature must be C# valid identifiers (no spaces/weird chars)
+            blob_metadata = {
+                'user_id': str(user_id),
+                'project_id': project_id,
+                'project_name': urllib.parse.quote(project_name), # Encode to ensure valid header characters
+                'product_type': urllib.parse.quote(product_type),
+                'project_status': 'active',
+                'created_at': project_data.get('created_at', current_time),
+                'updated_at': current_time,
+                'instruments_count': str(len(instruments_list)),
+                'accessories_count': str(len(accessories_list)),
+                'search_tabs_count': str(len(search_tabs)),
+                'conversations_count': str(conversations_count)
+            }
+
+            # Prepare the full Data content
             complete_project_data = {
+                'id': project_id, # Compatibility
+                'project_id': project_id,
+                'user_id': str(user_id),
                 'project_name': project_name,
                 'project_description': project_data.get('project_description', ''),
                 'initial_requirements': project_data.get('initial_requirements', ''),
                 'product_type': product_type,
                 'pricing': project_data.get('pricing', {}),
-                'identified_instruments': project_data.get('identified_instruments', []),
-                'identified_accessories': project_data.get('identified_accessories', []),
-                'search_tabs': project_data.get('search_tabs', []),
+                'identified_instruments': instruments_list,
+                'identified_accessories': accessories_list,
+                'search_tabs': search_tabs,
                 'conversation_histories': project_data.get('conversation_histories', {}),
                 'collected_data': project_data.get('collected_data', {}),
                 'generic_images': project_data.get('generic_images', {}),
@@ -93,65 +116,38 @@ class CosmosProjectManager:
                 'embedded_media': project_data.get('embedded_media', {}),
                 'project_metadata': {
                     'schema_version': '3.0',
-                    'storage_format': 'cosmos_blob',
+                    'storage_format': 'blob_folder',
                     'last_updated_by': 'ai_product_recommender_system'
-                }
+                },
+                'created_at': blob_metadata['created_at'],
+                'updated_at': blob_metadata['updated_at'],
+                'project_status': 'active'
             }
+
+            # Upload to Blob
+            blob_path = self._get_project_blob_path(user_id, project_id)
+            blob_client = self.container_client.get_blob_client(blob_path)
             
-            # 1. Upload to Azure Blob Storage
-            # Use 'projects' collection/folder
-            blob_id = self.blob_manager.upload_json_data(
-                complete_project_data,
-                metadata={
-                    'user_id': str(user_id),
-                    'project_name': project_name,
-                    'collection_type': 'projects'
-                }
+            blob_client.upload_blob(
+                json.dumps(complete_project_data, indent=2),
+                overwrite=True,
+                metadata=blob_metadata,
+                content_settings=ContentSettings(content_type='application/json')
             )
             
-            # 2. Update Cosmos DB Metadata
-            if not project_id:
-                project_id = str(uuid.uuid4())
-                is_new = True
-            else:
-                is_new = False
-                
-            # Check for name duplicates if new or name changed (Optimistic check)
-            # Cosmos doesn't support easy unique constraints on non-pkey fields without separate collection or stored procedure
-            # We will skip strict unique name check for now or do a query if critical.
-            # Simplified for migration: Just Upsert.
-            
-            project_doc = {
-                "id": project_id,
-                "user_id": str(user_id),
-                "project_name": project_name,
-                "project_description": project_data.get('project_description', ''),
-                "product_type": product_type,
-                "project_blob_id": blob_id, # Link to blob
-                "storage_format": "cosmos_blob",
-                "project_status": "active",
-                "created_at": current_time if is_new else project_data.get('created_at', current_time),
-                "updated_at": current_time,
-                # Store counts for list view
-                "instruments_count": len(complete_project_data['identified_instruments']),
-                "accessories_count": len(complete_project_data['identified_accessories']),
-                "search_tabs_count": len(complete_project_data['search_tabs']),
-                "conversations_count": complete_project_data['user_interactions'].get('conversations_count', 0)
-            }
-            
-            self.container.upsert_item(project_doc)
-            self.logger.info(f"Saved project {project_id} to Cosmos DB/Blob for user {user_id}")
+            self.logger.info(f"Saved project {project_id} to Blob Storage: {blob_path}")
 
+            # Return structure compatible with frontend
             return {
                 'project_id': project_id,
                 'project_name': project_name,
-                'project_description': project_doc['project_description'],
+                'project_description': complete_project_data['project_description'],
                 'product_type': product_type,
                 'pricing': complete_project_data['pricing'],
                 'feedback_entries': complete_project_data['feedback_entries'],
-                'created_at': project_doc['created_at'],
-                'updated_at': project_doc['updated_at'],
-                'project_status': project_doc['project_status']
+                'created_at': complete_project_data['created_at'],
+                'updated_at': complete_project_data['updated_at'],
+                'project_status': 'active'
             }
             
         except Exception as e:
@@ -159,91 +155,75 @@ class CosmosProjectManager:
             raise
 
     def get_user_projects(self, user_id: str) -> List[Dict[str, Any]]:
-        """Get all projects for a user (metadata from Cosmos)"""
+        """Get all projects for a user by listing blobs in their folder"""
         try:
-            if not self.container:
-                return []
-
-            query = (
-                "SELECT c.id, c.project_name, c.project_description, c.product_type, "
-                "c.instruments_count, c.accessories_count, c.search_tabs_count, "
-                "c.conversations_count, c.project_status, c.created_at, c.updated_at "
-                "FROM c WHERE c.user_id = @user_id AND c.project_status = 'active' "
-                "ORDER BY c.updated_at DESC"
-            )
-            parameters = [{"name": "@user_id", "value": str(user_id)}]
+            # Prefix: projects/{user_id}/
+            prefix = f"{self.base_path}/projects/{user_id}/"
             
-            items = list(self.container.query_items(
-                query=query,
-                parameters=parameters,
-                enable_cross_partition_query=False
-            ))
+            blobs = self.container_client.list_blobs(
+                name_starts_with=prefix,
+                include=['metadata']
+            )
             
             project_list = []
-            for item in items:
-                # Map to frontend expected summary format
+            for blob in blobs:
+                # Basic validation
+                if not blob.name.endswith('.json'):
+                    continue
+                
+                meta = blob.metadata or {}
+                
+                # Retrieve and decode metadata
+                p_name = urllib.parse.unquote(meta.get('project_name', 'Untitled'))
+                p_type = urllib.parse.unquote(meta.get('product_type', ''))
+                
                 project_summary = {
-                    'id': item['id'],
-                    'project_name': item.get('project_name', ''),
-                    'project_description': item.get('project_description', ''),
-                    'product_type': item.get('product_type', ''),
-                    'instruments_count': item.get('instruments_count', 0),
-                    'accessories_count': item.get('accessories_count', 0),
-                    'search_tabs_count': item.get('search_tabs_count', 0),
-                    'project_phase': 'unknown', # detailed phase usually inside blob, keeping simple
-                    'conversations_count': item.get('conversations_count', 0),
-                    'has_analysis': False, # would need deep inspection
-                    'schema_version': '3.0',
-                    'storage_format': 'cosmos_blob',
-                    'project_status': item.get('project_status', 'active'),
-                    'created_at': item.get('created_at'),
-                    'updated_at': item.get('updated_at'),
-                    'requirements_preview': '' # would need blob
+                    'id': meta.get('project_id') or blob.name.split('/')[-1].replace('.json', ''),
+                    'project_name': p_name,
+                    'product_type': p_type,
+                    'instruments_count': int(meta.get('instruments_count', 0)),
+                    'accessories_count': int(meta.get('accessories_count', 0)),
+                    'search_tabs_count': int(meta.get('search_tabs_count', 0)),
+                    'conversations_count': int(meta.get('conversations_count', 0)),
+                    'project_status': meta.get('project_status', 'active'),
+                    'created_at': meta.get('created_at'),
+                    'updated_at': meta.get('updated_at', blob.last_modified.isoformat() if blob.last_modified else None),
+                    # Fields not in metadata but nice to have defaults
+                    'project_description': '',
+                    'project_phase': 'unknown',
+                    'has_analysis': False,
+                    'requirements_preview': ''
                 }
                 project_list.append(project_summary)
+            
+            # Sort by updated_at desc
+            project_list.sort(key=lambda x: x.get('updated_at') or '', reverse=True)
             
             return project_list
             
         except Exception as e:
             self.logger.error(f"Failed to get projects for user {user_id}: {e}")
-            raise
+            # Don't crash, return empty list if container issue
+            return []
 
     def get_project_details(self, project_id: str, user_id: str) -> Dict[str, Any]:
-        """Get full project details (Metadata + Blob Content)"""
+        """Get full project details from Blob"""
         try:
-            if not self.container:
-                raise Exception("Cosmos DB container not initialized")
-
-            # 1. Get Metadata
-            try:
-                project_meta = self.container.read_item(item=project_id, partition_key=str(user_id))
-            except CosmosResourceNotFoundError:
-                raise ValueError("Project not found or access denied")
+            blob_path = self._get_project_blob_path(user_id, project_id)
+            blob_client = self.container_client.get_blob_client(blob_path)
+            
+            if not blob_client.exists():
+                raise ValueError("Project not found")
                 
-            # 2. Get content from Blob
-            blob_id = project_meta.get('project_blob_id')
-            if not blob_id:
-                # Fallback checking? No, if it's new system, it should be there.
-                # Could possibly support legacy if we migrated data, but we are just switching.
-                raise ValueError("Project data missing content reference")
-            
-            project_data = self.blob_manager.get_json_data_from_azure('projects', {'blob_path': blob_id})
-            
-            if not project_data:
-                # Try finding by name if blob path failed (resilience)
-                # Not implementing complex recovery now
-                raise ValueError("Failed to load project content from storage")
-
-            # Update ID and metadata fields
-            project_data['id'] = project_meta['id']
-            project_data['created_at'] = project_meta.get('created_at')
-            project_data['updated_at'] = project_meta.get('updated_at')
-            project_data['project_status'] = project_meta.get('project_status')
+            file_data = blob_client.download_blob().readall()
+            project_data = json.loads(file_data.decode('utf-8'))
             
             return project_data
-
+            
+        except ResourceNotFoundError:
+            raise ValueError("Project not found")
         except Exception as e:
-            self.logger.error(f"Failed to get project {project_id} for user {user_id}: {e}")
+            self.logger.error(f"Failed to get project {project_id}: {e}")
             raise
 
     def append_feedback_to_project(self, project_id: str, user_id: str, feedback_entry: Dict[str, Any]) -> bool:
@@ -255,8 +235,6 @@ class CosmosProjectManager:
                 project_data['feedback_entries'] = []
             project_data['feedback_entries'].append(feedback_entry)
             
-            # Save back (Overwrites blob)
-            project_data['project_id'] = project_id
             self.save_project(user_id, project_data)
             return True
         except Exception as e:
@@ -264,36 +242,16 @@ class CosmosProjectManager:
             raise
 
     def delete_project(self, project_id: str, user_id: str) -> bool:
-        """Delete project (Metadata + Blob)"""
+        """Delete project blob"""
         try:
-            # Get meta to find blob
-            try:
-                project_meta = self.container.read_item(item=project_id, partition_key=str(user_id))
-            except CosmosResourceNotFoundError:
-                raise ValueError("Project not found")
-
-            # Delete Blob
-            blob_id = project_meta.get('project_blob_id')
-            if blob_id:
-                # We need to construct a query/filename for delete_file
-                # delete_file takes collection_name and query. 
-                # If we passed blob_path directly?
-                # azure_blob_utils.delete_file logic searches by metadata match. 
-                # We know the blob_id (which is usually part of path).
-                
-                # Check how we saved it: 'projects' collection. filename is based on doc_id usually.
-                # Actually upload_json_data returns doc_id (blob_id).
-                # To delete specifically, we can use the 'blob_path' strategy IF delete supports it.
-                # Looking at azure_blob_utils.py, delete_file uses LISTING + Metadata Match. This is inefficient.
-                # But we can pass 'blob_name' if we interpret blob_id as name.
-                pass
-                # For now, let's skip blob deletion or implement it simply if we can. 
-                # Leaving orphan blobs is acceptable for now to avoid complexity in this migration.
+            blob_path = self._get_project_blob_path(user_id, project_id)
+            blob_client = self.container_client.get_blob_client(blob_path)
             
-            # Delete Cosmos Doc
-            self.container.delete_item(item=project_id, partition_key=str(user_id))
-            return True
-
+            if blob_client.exists():
+                blob_client.delete_blob()
+                return True
+            return False
+            
         except Exception as e:
             self.logger.error(f"Failed to delete project: {e}")
             raise

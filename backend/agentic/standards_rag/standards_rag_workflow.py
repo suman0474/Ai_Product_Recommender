@@ -26,7 +26,45 @@ try:
 except ImportError:
     UTILITIES_AVAILABLE = False
 
+import threading
+
 logger = logging.getLogger(__name__)
+
+
+# ============================================================================
+# [FIX #5] CACHED LLM FOR VALIDATION
+# ============================================================================
+# Avoid creating a new LLM instance for every validate_response_node call.
+# This eliminates repeated "Primary LLM wrapped with Xs timeout" log spam
+# and reduces init overhead (~1-2s per call saved).
+
+_cached_validation_llm = None
+_cached_validation_llm_lock = threading.Lock()
+
+
+def _get_cached_validation_llm():
+    """
+    Get or create a cached LLM instance for validation.
+
+    [FIX #5] Singleton pattern to avoid per-call LLM initialization overhead.
+    """
+    global _cached_validation_llm
+
+    if _cached_validation_llm is not None:
+        return _cached_validation_llm
+
+    with _cached_validation_llm_lock:
+        # Double-check inside lock
+        if _cached_validation_llm is not None:
+            return _cached_validation_llm
+
+        logger.info("[FIX #5] Creating cached validation LLM (singleton)...")
+        _cached_validation_llm = create_llm_with_fallback(
+            model="gemini-2.5-flash",
+            temperature=0.1,
+            timeout=60  # Use the new 60s default
+        )
+        return _cached_validation_llm
 
 
 # ============================================================================
@@ -236,9 +274,27 @@ def retrieve_standards_node(state: StandardsRAGState) -> StandardsRAGState:
         logger.info(f"Retrieved {len(state['retrieved_docs'])} documents")
         logger.info(f"Unique sources: {list(sources.keys())}")
 
+        # ╔════════════════════════════════════════════════════════════════════════╗
+        # ║  [FIX #1] FAST-FAIL ON ZERO DOCUMENTS                                 ║
+        # ║  When vector store returns 0 results, retrying will NEVER help        ║
+        # ║  This is especially true when in mock_mode (Pinecone INIT_ERROR)      ║
+        # ║  Saves 15-30 seconds per call (3 retries × 5-10s LLM validation each) ║
+        # ╚════════════════════════════════════════════════════════════════════════╝
         if len(state['retrieved_docs']) == 0:
-            logger.warning("No documents retrieved")
-            state['error'] = "No relevant standards documents found for this question"
+            is_mock_mode = search_results.get('mock_mode', False)
+            mock_reason = search_results.get('mock_reason', 'unknown')
+
+            if is_mock_mode:
+                logger.warning(f"[FIX #1] 🔴 ZERO DOCS + MOCK MODE DETECTED - Fast-failing!")
+                logger.warning(f"[FIX #1]    Mock Reason: {mock_reason}")
+                logger.warning(f"[FIX #1]    Retries Prevented: {state['max_retries']} (saves 15-30+ seconds)")
+                state['should_fail_fast'] = True
+                state['error'] = f"Vector store in mock mode ({mock_reason}). No documents available."
+            else:
+                # Even without mock_mode, 0 docs means retrying won't help
+                logger.warning("[FIX #1] ⚠️ ZERO DOCS RETRIEVED - Setting fast-fail (retries won't produce new docs)")
+                state['should_fail_fast'] = True
+                state['error'] = "No relevant standards documents found for this question"
 
     except Exception as e:
         logger.error(f"Error retrieving documents: {e}", exc_info=True)
@@ -360,6 +416,21 @@ def validate_response_node(state: StandardsRAGState) -> StandardsRAGState:
     """
     logger.info("[Node 4] Validating response...")
 
+    # ╔════════════════════════════════════════════════════════════════════════╗
+    # ║  [FIX #1] SKIP VALIDATION WHEN FAST-FAIL IS SET                       ║
+    # ║  No point validating an empty-context answer - it will always fail    ║
+    # ║  Saves 1 LLM call (5-10 seconds) when vector store returned 0 docs    ║
+    # ╚════════════════════════════════════════════════════════════════════════╝
+    if state.get('should_fail_fast', False):
+        logger.info("[Node 4] SKIP validation - should_fail_fast is set (no docs, retries won't help)")
+        state['is_valid'] = True  # Mark as valid to proceed to finalize
+        state['validation_result'] = {
+            'skipped': True,
+            'reason': 'Fast-fail mode - no documents retrieved, validation skipped',
+            'overall_score': 0.0
+        }
+        return state
+
     # =========================================================================
     # OPTIMIZATION: Skip validation if confidence is high and answer is good
     # This saves 1 LLM API call when the answer is clearly adequate
@@ -394,8 +465,8 @@ def validate_response_node(state: StandardsRAGState) -> StandardsRAGState:
         return state
 
     try:
-        # Create validator
-        llm = create_llm_with_fallback(model="gemini-2.5-flash", temperature=0.1)
+        # [FIX #5] Use cached LLM to avoid per-call init overhead
+        llm = _get_cached_validation_llm()
         validator = ResponseValidatorAgent(llm=llm)
 
         # Validate

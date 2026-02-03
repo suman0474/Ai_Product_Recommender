@@ -1,0 +1,46 @@
+{
+  "technical_specifications": {
+    "Calibration_Points": {
+      "value": "multiple points across operating range (e.g., 0, 25, 50, 75, 100%)",
+      "source": "CALIBRATION"
+    }
+  },
+  "maintenance_procedures": {
+    "Cable_Specification": "shielded twisted-pair for analog and digital signals, follow manufacturer's cable requirements for Fieldbus, maintain overall shield continuity",
+    "Calibration_Frequency": "at least annually for safety-critical instruments",
+    "Corrective_Maintenance_Action": "repair or replace failed instruments promptly",
+    "Data_Sheet_Fields": "device tag, communication protocol, node address, power consumption, hazardous area certification, input/output type, signal range, isolation rating, manufacturer model",
+    "Documentation_Requirements": "calibration data, date, technician, calibration equipment used, certificates",
+    "Hazardous_Area_Work_Requirements": "work permits and gas testing",
+    "Network_Architecture_Considerations": "segment length limits, number of devices per segment, redundant media for critical systems, isolation with repeaters",
+    "Out_Of_Tolerance_Action": "remove from service, tag, repair or replace, evaluate process impact, implement corrective action",
+    "Ppe_Requirement": "appropriate PPE when working on process equipment",
+    "Preventive_Maintenance_Tasks": "routine inspections (visual check of cables, enclosures, indications), clean sensors, replace consumables (filters, membranes, diaphragms), lubricate moving parts",
+    "Record_Retention": "maintain calibration certificates and maintenance records for audit and compliance",
+    "Spare_Parts_Inventory": "maintain list of critical spares for regulators and fittings",
+    "Technician_Qualification": "qualified technicians trained on specific instrument types",
+    "Training_Topics": "new technologies, safety regulations, maintenance software"
+  },
+  "safety_requirements": {
+    "Safety_Procedure_Before_Disconnection": "vent and depressurize impulse lines",
+    "Safety_Procedure_Before_Removal": "lockout/tagout"
+  },
+  "requirements_and_criteria": {
+    "Calibration_Equipment_Types": "deadweight testers, pressure pumps, electronic calibrators",
+    "Communication_Protocol_Support": "HART, FOUNDATION Fieldbus H1, Profibus PA/DP, Modbus RTU/TCP, WirelessHART / ISA100, Industrial Ethernet",
+    "Intrinsic_Safety_Barrier_Selection_Criteria": "gas group, temperature class, voltage/current requirements, matching with field device entity parameters",
+    "Signal_Conditioning_Requirements": "Intrinsic safety (IS) barriers, signal isolators, surge protection devices (SPDs), IS power supplies"
+  },
+  "invalid_items_removed": [
+    "Adjustment_Parameters",
+    "Calibration_Equipment_Accuracy_Traceability",
+    "Calibration_Equipment_Maintenance",
+    "Hysteresis_Minimization",
+    "Management_System",
+    "Pre_Calibration_Inspection",
+    "Predictive_Maintenance_Inputs",
+    "Predictive_Maintenance_Methods",
+    "Signal_Isolation_Criteria",
+    "Spare_Parts_Storage"
+  ]
+}

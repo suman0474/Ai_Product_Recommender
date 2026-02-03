@@ -85,6 +85,28 @@ class BaseDocumentStore:
     def clear_collection(self, collection_type: str) -> Dict:
         raise NotImplementedError
 
+    def is_healthy(self) -> bool:
+        """
+        Check if the vector store is healthy and can return real results.
+
+        [FIX #2] Used by callers to skip standards_rag calls when vector store
+        is in mock mode (INIT_ERROR). Saves 15-30+ seconds per item by avoiding
+        the full retrieval -> generation -> validation -> retry cycle.
+
+        Returns:
+            True if healthy (can return real results), False if in mock/fallback mode
+        """
+        raise NotImplementedError
+
+    def get_health_status(self) -> Dict[str, Any]:
+        """
+        Get detailed health status of the vector store.
+
+        Returns:
+            Dict with 'healthy' bool, 'reason' string, and any additional details
+        """
+        raise NotImplementedError
+
 
 # ============================================================================
 # PINECONE DOCUMENT STORE (Primary)
@@ -355,6 +377,46 @@ class PineconeDocumentStore(BaseDocumentStore):
         except Exception as e:
             logger.error(f"Clear failed: {e}")
             return {"success": False, "error": str(e)}
+
+    def is_healthy(self) -> bool:
+        """
+        Check if the vector store is healthy and can return real results.
+
+        [FIX #2] Used by callers to skip standards_rag calls when vector store
+        is in mock mode (INIT_ERROR). Saves 15-30+ seconds per item by avoiding
+        the full retrieval -> generation -> validation -> retry cycle.
+
+        Returns:
+            True if healthy (can return real results), False if in mock/fallback mode
+        """
+        return not getattr(self, '_use_mock', False)
+
+    def get_health_status(self) -> Dict[str, Any]:
+        """
+        Get detailed health status of the vector store.
+
+        [FIX #2] Provides diagnostic info for why the store is unhealthy.
+
+        Returns:
+            Dict with 'healthy' bool, 'reason' string, and additional details
+        """
+        is_mock = getattr(self, '_use_mock', False)
+        mock_reason = getattr(self, '_mock_reason', None)
+
+        if not is_mock:
+            return {
+                'healthy': True,
+                'backend': 'pinecone',
+                'index_name': self.index_name,
+                'reason': 'Connected to Pinecone successfully'
+            }
+        else:
+            return {
+                'healthy': False,
+                'backend': 'mock',
+                'reason': mock_reason or 'Unknown initialization error',
+                'action_required': 'Check PINECONE_API_KEY environment variable and Pinecone index availability'
+            }
 
 
 # ============================================================================

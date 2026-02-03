@@ -461,6 +461,16 @@ class AzureBlobFileManager:
             bool: True if deleted successfully
         """
         try:
+            # Strategy 1: Direct blob path if provided
+            if 'blob_path' in query:
+                blob_path = query['blob_path']
+                if not blob_path.startswith(self.base_path):
+                    blob_path = f"{self.base_path}/{collection_name}/{blob_path}"
+                blob_client = self.container_client.get_blob_client(blob_path)
+                blob_client.delete_blob()
+                logger.info(f"Successfully deleted file from Azure Blob: {blob_path}")
+                return True
+
             # Find the blob first
             prefix = f"{self.base_path}/{collection_name}/"
             blobs = self.container_client.list_blobs(name_starts_with=prefix, include=['metadata'])

@@ -1432,6 +1432,37 @@ const Project = () => {
         }
     };
 
+    // =================================================================================================
+    // AUTO-SAVE TO BACKEND (Azure Blob)
+    // =================================================================================================
+
+    // Keep a ref to the latest save function to avoid closure staleness in setInterval
+    const handleSaveProjectRef = useRef(handleSaveProject);
+    useEffect(() => {
+        handleSaveProjectRef.current = handleSaveProject;
+    });
+
+    useEffect(() => {
+        // Only auto-save if we have a valid project ID (user has saved at least once)
+        if (!currentProjectId) return;
+
+        console.log('[AUTO_SAVE] Initializing auto-save interval for project:', currentProjectId);
+
+        const autoSaveInterval = setInterval(() => {
+            console.log('[AUTO_SAVE] Triggering scheduled auto-save...');
+            if (handleSaveProjectRef.current) {
+                // Perform silent save (skipDuplicateDialog=true)
+                handleSaveProjectRef.current(undefined, { skipDuplicateDialog: true })
+                    .catch(e => console.error('[AUTO_SAVE] Failed:', e));
+            }
+        }, 60000); // Save every 60 seconds
+
+        return () => {
+            console.log('[AUTO_SAVE] Clearing interval');
+            clearInterval(autoSaveInterval);
+        };
+    }, [currentProjectId]);
+
     const handleOpenProject = async (projectId: string) => {
         try {
             const response = await fetch(`${BASE_URL}/api/projects/${projectId}`, {

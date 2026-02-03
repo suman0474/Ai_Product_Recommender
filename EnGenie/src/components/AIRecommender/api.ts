@@ -142,6 +142,63 @@ export const updateProfile = async (
   }
 };
 
+export interface StandardsDocumentRecord {
+  documentId: string;
+  filename: string;
+  contentType?: string | null;
+  fileType?: string | null;
+  status: string;
+  characterCount?: number | null;
+  errorMessage?: string | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+}
+
+export const uploadStandardsDocument = async (file: File): Promise<any> => {
+  try {
+    const formData = new FormData();
+    formData.append('file', file);
+    const response = await axios.post('/api/standards/upload', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' }
+    });
+    return convertKeysToCamelCase(response.data);
+  } catch (error: any) {
+    console.error("Standards upload error:", error.response?.data || error.message);
+    throw new Error(error.response?.data?.error || "Standards upload failed");
+  }
+};
+
+export const listStandardsDocuments = async (): Promise<StandardsDocumentRecord[]> => {
+  try {
+    const response = await axios.get('/api/standards/list');
+    const data = convertKeysToCamelCase(response.data);
+    return (data.documents || []) as StandardsDocumentRecord[];
+  } catch (error: any) {
+    console.error("Standards list error:", error.response?.data || error.message);
+    throw new Error(error.response?.data?.error || "Failed to load standards documents");
+  }
+};
+
+export const deleteStandardsDocument = async (documentId: string): Promise<any> => {
+  try {
+    const response = await axios.delete(`/api/standards/${encodeURIComponent(documentId)}`);
+    return convertKeysToCamelCase(response.data);
+  } catch (error: any) {
+    console.error("Standards delete error:", error.response?.data || error.message);
+    throw new Error(error.response?.data?.error || "Failed to delete standards document");
+  }
+};
+
+export const reindexStandardsDocument = async (documentId: string): Promise<any> => {
+  try {
+    const response = await axios.post(`/api/standards/${encodeURIComponent(documentId)}/reindex`);
+    return convertKeysToCamelCase(response.data);
+  } catch (error: any) {
+    console.error("Standards reindex error:", error.response?.data || error.message);
+    throw new Error(error.response?.data?.error || "Failed to reindex standards document");
+  }
+};
+
 /**
  * Checks if the user is authenticated, returning user info or null if not authenticated.
  */

@@ -36,6 +36,13 @@ except ImportError:
     is_valid_spec_value = None
     extract_and_validate_spec = None
 
+# Import spec value validator
+try:
+    from .spec_value_validator import validate_spec_value, filter_valid_specs
+except ImportError:
+    validate_spec_value = None
+    filter_valid_specs = None
+
 
 # =============================================================================
 # SPECIFICATION VERIFIER AGENT
@@ -329,6 +336,23 @@ class SpecVerifierAgent:
             if value_str.isupper() or re.match(r'^[A-Z][a-z]+$', value_str):
                 return True, "technical_spec"
 
+        # ENHANCED: Use spec_value_validator for additional validation
+        if validate_spec_value:
+            validation_result = validate_spec_value(key, value_str)
+            
+            # If validator says it's invalid, use its classification
+            if not validation_result.is_valid:
+                logger.debug(
+                    f"[SpecVerifier] Validator rejected '{key}': {validation_result.reason}"
+                )
+                return False, "description"
+            # If validator says it's valid, accept it
+            elif validation_result.is_valid:
+                logger.debug(
+                    f"[SpecVerifier] Validator approved '{key}' as {validation_result.value_type.value}"
+                )
+                return True, "technical_spec"
+        
         # Default: if doesn't match any clear pattern, treat as description
         # This is more conservative - better to re-extract than keep bad data
         logger.debug(f"[SpecVerifier] No clear pattern for '{key}', treating as description")

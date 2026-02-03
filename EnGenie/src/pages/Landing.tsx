@@ -1,6 +1,6 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Building2, Package, BookOpen, Search, MessageSquare, CheckCircle, Shield, Grid, Wrench, ChevronRight, Linkedin, Twitter, Github } from 'lucide-react';
+import { Building2, Package, BookOpen, Search, MessageSquare, CheckCircle, Shield, Grid, Wrench, ChevronRight, Linkedin, Twitter, Github, Brain, Zap, BarChart3 } from 'lucide-react';
 import ScrollAnimation from '../components/ScrollAnimation';
 
 const Landing = () => {
@@ -8,7 +8,7 @@ const Landing = () => {
 
   const mainFeatures = [
     {
-      icon: BookOpen,
+      image: "/icon-openbook-3d.png",
       title: "Solution Engineering",
       description: "Transform your greenfield or brownfield project requirements into precise, actionable specifications. Our AI analyzes your unique needs and proposes the optimal instruments and accessories.",
       benefits: [
@@ -20,7 +20,7 @@ const Landing = () => {
       badge: "Enterprise & Supplier"
     },
     {
-      icon: Search,
+      image: "/icon-search-3d.png",
       title: "Intelligent Search",
       description: "Empower buyers and requisitioners with AI-driven specification assistance. Get intelligent recommendations backed by detailed rationale—not just results, but reasoning.",
       benefits: [
@@ -32,7 +32,7 @@ const Landing = () => {
       badge: "Enterprise & Supplier"
     },
     {
-      icon: MessageSquare,
+      image: "/icon-chat-3d.png",
       title: "Quick Chat Assistant",
       description: "Get instant, expert-level answers on instruments, accessories, or general industrial knowledge. Your on-demand technical consultant available 24/7.",
       benefits: [
@@ -50,9 +50,41 @@ const Landing = () => {
 
   const stats = [
     { value: "85%", label: "Faster Specification Time" },
-    { value: "10K+", label: "Instruments Cataloged" },
-    { value: "40%", label: "Cost Savings Achieved" },
+    { value: "50+", label: "Instruments Cataloged" },
+    { value: "40%", label: "Cost Savings" },
     { value: "99.2%", label: "Specification Accuracy" }
+  ];
+
+  const features = [
+    {
+      image: "/icon-brain-3d.png",
+      title: "Company-Personalized Matching",
+      description: "Recommendations aligned to your approved strategy, engineering standards, and inventory availability."
+    },
+    {
+      image: "/icon-chart-3d.png",
+      title: "Intelligent Vendor Analysis",
+      description: "Side-by-side comparison and scoring across technical fit, compliance, and commercial factors."
+    },
+    {
+      image: "/icon-lightning-3d.png",
+      title: "Real-time Validation",
+      description: "Instant requirement checks, missing-field prompts, and fast shortlisting."
+    },
+    {
+      image: "/icon-shield-3d.png",
+      title: "Secure & Reliable",
+      description: "Enterprise-grade security with consistent, explainable outputs you can trust."
+    }
+  ];
+
+  const productTypes = [
+    "Pressure Transmitter",
+    "Temperature Transmitter",
+    "Humidity Transmitter",
+    "Flow Meter",
+    "Level Transmitter",
+    "pH Sensors"
   ];
 
   const steps = [
@@ -136,7 +168,7 @@ const Landing = () => {
 
       {/* Hero Section */}
       <ScrollAnimation>
-        <section className="pt-12 pb-12 md:pt-16 md:pb-20 px-6 max-w-7xl mx-auto">
+        <section className="pt-12 pb-6 md:pt-16 md:pb-20 px-6 max-w-7xl mx-auto">
           <div className="grid lg:grid-cols-2 gap-12 items-center">
             {/* Left Column: Text Content */}
             <div className="text-left space-y-8">
@@ -254,6 +286,46 @@ const Landing = () => {
         </section>
       </ScrollAnimation>
 
+      {/* Powerful AI-Driven Features Section */}
+      <section className="pt-4 pb-16">
+        <div className="max-w-7xl mx-auto px-6">
+          <ScrollAnimation>
+            <div className="text-center mb-16">
+              <h2 className="text-4xl font-bold mb-4 text-gradient inline-block">
+                Powerful AI-Driven Features
+              </h2>
+              <p className="text-lg text-muted-foreground">
+                Experience the next generation of product recommendation technology
+              </p>
+            </div>
+          </ScrollAnimation>
+
+          <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-8">
+            {features.map((feature, index) => (
+              <ScrollAnimation key={index}>
+                <div
+                  className="glass-card p-6 group hover:scale-105 transition-transform duration-300 border-white/20 !bg-white/10 hover:!bg-white/20 h-full"
+                >
+                  <div className="text-center">
+                    <div className="mb-6 relative flex items-center justify-center transform transition-transform duration-300 group-hover:scale-110">
+                      <img
+                        src={feature.image}
+                        alt={feature.title}
+                        className="w-24 h-24 object-contain mix-blend-multiply filter contrast-125 drop-shadow-xl"
+                      />
+                    </div>
+                    <h3 className="text-lg font-semibold mb-2">{feature.title}</h3>
+                  </div>
+                  <div>
+                    <p className="text-muted-foreground text-center text-sm leading-relaxed">{feature.description}</p>
+                  </div>
+                </div>
+              </ScrollAnimation>
+            ))}
+          </div>
+        </div>
+      </section>
+
       {/* Stats Bar */}
       <section className="py-16 bg-gradient-to-br from-primary/10 to-secondary/10 backdrop-blur-sm">
         <div className="max-w-7xl mx-auto px-6">
@@ -271,7 +343,7 @@ const Landing = () => {
       </section>
 
       {/* Who It's For Section */}
-      <section id="solutions" className="py-24">
+      <section id="solutions" className="py-16">
         <div className="max-w-7xl mx-auto px-6">
           <ScrollAnimation>
             <div className="text-center mb-16">
@@ -354,7 +426,7 @@ const Landing = () => {
       </section>
 
       {/* Features Section - 3 Main Modules */}
-      <section id="features" className="py-24 bg-gradient-to-br from-primary/5 to-secondary/5">
+      <section id="features" className="py-16 bg-gradient-to-br from-primary/5 to-secondary/5">
         <div className="max-w-7xl mx-auto px-6">
           <ScrollAnimation>
             <div className="text-center mb-16">
@@ -371,9 +443,13 @@ const Landing = () => {
           <div className="grid md:grid-cols-3 gap-8">
             {mainFeatures.map((feature, index) => (
               <ScrollAnimation key={index}>
-                <div className="glass-card p-8 h-full hover:scale-[1.02] transition-all duration-300 flex flex-col">
-                  <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-primary/20 to-secondary/20 flex items-center justify-center mb-6">
-                    <feature.icon className="w-8 h-8 text-primary" />
+                <div className="glass-card p-8 h-full hover:scale-[1.02] transition-all duration-300 flex flex-col group">
+                  <div className="w-28 h-28 mx-auto flex items-center justify-center mb-2 transform transition-transform duration-300 group-hover:scale-110">
+                    <img
+                      src={feature.image}
+                      alt={feature.title}
+                      className="w-full h-full object-contain mix-blend-multiply filter contrast-125 drop-shadow-xl"
+                    />
                   </div>
                   <h3 className="text-2xl font-bold mb-4">{feature.title}</h3>
                   <p className="text-muted-foreground mb-6 leading-relaxed flex-grow">
@@ -401,7 +477,7 @@ const Landing = () => {
       </section>
 
       {/* How It Works Section */}
-      <section id="how-it-works" className="py-24 relative overflow-hidden">
+      <section id="how-it-works" className="py-16 relative overflow-hidden">
         <div className="absolute inset-0 bg-gradient-to-br from-primary/10 to-secondary/10 backdrop-blur-3xl"></div>
         <div className="relative max-w-7xl mx-auto px-6">
           <ScrollAnimation>
@@ -438,7 +514,7 @@ const Landing = () => {
       </section>
 
       {/* Benefits Section */}
-      <section id="benefits" className="py-24">
+      <section id="benefits" className="py-16">
         <div className="max-w-7xl mx-auto px-6">
           <div className="grid md:grid-cols-2 gap-12 items-center">
             {/* Visual Side (Now on Left) */}
@@ -523,26 +599,72 @@ const Landing = () => {
 
 
 
+      {/* Product Types Section */}
+      <ScrollAnimation>
+        <section className="py-16">
+          <div className="relative max-w-7xl mx-auto px-6 text-center">
+            <h2 className="text-3xl font-bold mb-3">Supported Product Categories</h2>
+            <p className="text-base text-muted-foreground mb-8">
+              Comprehensive analysis across various industrial sensor types
+            </p>
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+              {productTypes.map((type, index) => (
+                <div
+                  key={index}
+                  className="p-4 font-medium transition-all duration-300 text-base flex items-center justify-center min-h-[50px] hover:scale-102"
+                  style={{
+                    backgroundColor: 'rgba(255, 255, 255, 0.35)',
+                    backdropFilter: 'blur(16px)',
+                    WebkitBackdropFilter: 'blur(16px)',
+                    border: '1px solid rgba(255, 255, 255, 0.4)',
+                    borderRadius: '0.75rem',
+                    boxShadow: '0 4px 30px rgba(0, 0, 0, 0.15)',
+                    transition: 'all 0.3s ease',
+                    cursor: 'pointer',
+                    width: '100%',
+                    textAlign: 'center'
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.backgroundColor = 'rgba(255, 255, 255, 0.5)';
+                    e.currentTarget.style.backdropFilter = 'blur(20px)';
+                    e.currentTarget.style.WebkitBackdropFilter = 'blur(20px)';
+                    e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.6)';
+                    e.currentTarget.style.transform = 'scale(1.02)';
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.backgroundColor = 'rgba(255, 255, 255, 0.35)';
+                    e.currentTarget.style.backdropFilter = 'blur(16px)';
+                    e.currentTarget.style.WebkitBackdropFilter = 'blur(16px)';
+                    e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.4)';
+                    e.currentTarget.style.transform = 'scale(1)';
+                  }}
+                >
+                  {type}
+                </div>
+              ))}
+            </div>
+          </div>
+        </section>
+      </ScrollAnimation>
+
       {/* CTA Section */}
       <ScrollAnimation>
-        <section className="py-24">
-          <div className="max-w-4xl mx-auto px-6">
-            <div className="p-12 text-center bg-gradient-to-br from-white/80 to-blue-50/50 backdrop-blur-xl border border-white/60 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.5)] hover:shadow-[inset_0_0_0_1px_rgba(255,255,255,0.6),0_8px_32px_rgba(0,0,0,0.05)] hover:scale-[1.02] transition-all duration-300 rounded-3xl">
-              <h2 className="text-4xl md:text-5xl font-bold mb-6">
-                Ready to Transform Your Procurement?
-              </h2>
-              <p className="text-xl text-muted-foreground mb-8 max-w-2xl mx-auto leading-relaxed">
-                Join forward-thinking enterprises and suppliers leveraging AI to drive procurement excellence, reduce costs, and accelerate project timelines.
-              </p>
-              <div className="flex flex-col sm:flex-row gap-4 justify-center">
-                <button className="btn-glass-primary px-8 py-4 text-lg rounded-full inline-flex items-center justify-center shadow-lg hover:shadow-xl hover:scale-105 transition-all" onClick={() => navigate('/signup')}>
-                  Get Started
-                  <ChevronRight className="ml-2 w-5 h-5" />
-                </button>
-                <button className="btn-glass-secondary px-8 py-4 text-lg rounded-full shadow-md hover:shadow-lg hover:scale-105 transition-all" onClick={() => navigate('/login')}>
-                  Sign In
-                </button>
-              </div>
+        <section className="py-16 text-center">
+          <div className="glass-card popup-blur-card p-12 max-w-4xl mx-auto border-white/30 !bg-white/15 hover:!bg-white/25 hover:shadow-2xl transition-all duration-300">
+            <h2 className="text-4xl font-bold mb-6 text-gradient inline-block">
+              Ready to Find Your Perfect Product?
+            </h2>
+            <p className="text-xl text-muted-foreground mb-8 text-center max-w-2xl mx-auto">
+              Join teams who trust EnGenie to standardize selection, reduce rework, and accelerate decisions. Product type detection starts automatically upon entering your requirements.
+            </p>
+            <div className="flex flex-col sm:flex-row gap-4 justify-center">
+              <button className="btn-glass-primary px-8 py-3 text-lg rounded-full inline-flex items-center justify-center shadow-lg hover:shadow-xl hover:scale-105 transition-all" onClick={() => navigate('/signup')}>
+                Create Account
+                <ChevronRight className="ml-2 w-5 h-5" />
+              </button>
+              <button className="btn-glass-secondary px-8 py-3 text-lg rounded-full shadow-md hover:shadow-lg hover:scale-105 transition-all" onClick={() => navigate('/login')}>
+                I Already Have an Account
+              </button>
             </div>
           </div>
         </section>

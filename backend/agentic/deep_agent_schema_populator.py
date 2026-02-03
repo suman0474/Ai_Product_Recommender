@@ -140,6 +140,24 @@ def populate_schema_fields_with_standards(
     Returns:
         Tuple of (populated_schema, fields_populated_count)
     """
+    # ╔════════════════════════════════════════════════════════════════════════╗
+    # ║  [FIX #2] VECTOR STORE HEALTH CHECK                                   ║
+    # ║  Skip standards_rag entirely if vector store is unhealthy             ║
+    # ║  Saves 15-30+ seconds by avoiding the retrieval→generate→retry cycle  ║
+    # ╚════════════════════════════════════════════════════════════════════════╝
+    try:
+        from agentic.vector_store import get_vector_store
+        vector_store = get_vector_store()
+        if not vector_store.is_healthy():
+            health_status = vector_store.get_health_status()
+            logger.warning(
+                f"[FIX #2] 🔴 VECTOR STORE UNHEALTHY - Skipping standards_rag for {product_type}. "
+                f"Reason: {health_status.get('reason', 'unknown')}"
+            )
+            return schema, 0
+    except Exception as health_check_error:
+        logger.debug(f"[FIX #2] Health check failed (proceeding anyway): {health_check_error}")
+
     try:
         from agentic.deep_agent.adaptive_prompt_engine import get_adaptive_prompt_engine
         from agentic.standards_rag.standards_rag_workflow import run_standards_rag_workflow

@@ -33,3 +33,17 @@ class Log(db.Model):
     
     # Automatically set the timestamp when a log is created
     timestamp = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+
+class StandardsDocument(db.Model):
+    id = db.Column(db.String(64), primary_key=True)
+    user_id = db.Column(db.Integer, nullable=False, index=True)
+    filename = db.Column(db.String(255), nullable=False)
+    content_type = db.Column(db.String(255), nullable=True)
+    file_type = db.Column(db.String(32), nullable=True)
+    raw_blob_path = db.Column(db.Text, nullable=True)
+    extracted_blob_path = db.Column(db.Text, nullable=True)
+    status = db.Column(db.String(32), nullable=False, default='uploaded')
+    character_count = db.Column(db.Integer, nullable=True)
+    error_message = db.Column(db.Text, nullable=True)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)

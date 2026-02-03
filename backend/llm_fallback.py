@@ -381,24 +381,24 @@ class LLMWithTimeout(Runnable):
 
     Properly implements LangChain Runnable interface for chain compatibility.
 
-    DEFAULT TIMEOUT: 600 seconds (10 minutes) for production stability.
-    This prevents timeout errors during heavy LLM processing while still
-    providing protection against hung connections.
+    [FIX #3] DEFAULT TIMEOUT: 60 seconds (1 minute) to prevent worst-case hangs.
+    Most LLM calls complete in 2-30 seconds. For known long operations (ranking,
+    complex synthesis), pass timeout=120 or timeout=180 explicitly.
     """
 
     # Use PrivateAttr for non-serializable fields (Pydantic v2 compatible)
     _base_llm: Any = PrivateAttr()
-    _timeout_seconds: int = PrivateAttr(default=600)  # 10 minutes default
+    _timeout_seconds: int = PrivateAttr(default=60)  # [FIX #3] 1 minute default (was 10 minutes)
     _model_name: str = PrivateAttr(default="unknown")
 
-    def __init__(self, base_llm: Any, timeout_seconds: int = 600, **kwargs):
+    def __init__(self, base_llm: Any, timeout_seconds: int = 60, **kwargs):
         """
         Initialize LLM with timeout wrapper
 
         Args:
             base_llm: The underlying LLM instance
-            timeout_seconds: Maximum seconds to wait for LLM response (default: 600 = 10 minutes)
-                            Production-grade timeout to handle complex prompts without timing out.
+            timeout_seconds: Maximum seconds to wait for LLM response (default: 60 = 1 minute)
+                            [FIX #3] Reduced from 600s to prevent worst-case 10-minute hangs.
         """
         super().__init__(**kwargs)
         self._base_llm = base_llm
@@ -610,10 +610,18 @@ class LLMWithFallback(Runnable):
             return self.primary_llm.invoke(input, config=config, **kwargs)
         except Exception as e:
             # Check if we should fallback
-            is_rate_limit = any(x in str(e) for x in ['429', 'Resource exhausted', 'RESOURCE_EXHAUSTED', 'quota', 'timed out'])
-            
-            if self.fallback_llm and is_rate_limit:
-                logger.warning(f"[LLM_FALLBACK] Primary model {self.model_name} failed with rate limit/timeout. Switching to FALLBACK.")
+            # FIX #4: Expanded trigger list to include API key errors (prevents hangs on expired keys)
+            error_str = str(e)
+            fallback_triggers = [
+                '429', 'Resource exhausted', 'RESOURCE_EXHAUSTED', 'quota', 'timed out',
+                # FIX #4: API key/auth errors - fallback to OpenAI when Google key expires
+                'API_KEY_INVALID', 'api key expired', 'key expired', 'InvalidArgument',
+                'API key not valid', 'invalid api key', 'authentication failed'
+            ]
+            should_fallback = any(trigger.lower() in error_str.lower() for trigger in fallback_triggers)
+
+            if self.fallback_llm and should_fallback:
+                logger.warning(f"[LLM_FALLBACK] Primary model {self.model_name} failed ({type(e).__name__}). Switching to FALLBACK.")
                 try:
                     return self.fallback_llm.invoke(input, config=config, **kwargs)
                 except Exception as fallback_error:
@@ -675,8 +683,8 @@ def create_llm_with_fallback(
             )
             
             # Always wrap with timeout for production stability
-            # Default: 600 seconds (10 minutes) if not specified
-            effective_timeout = timeout if timeout else 600
+            # [FIX #3] Default: 60 seconds (1 minute) - reduced from 600s to prevent hangs
+            effective_timeout = timeout if timeout else 60
             primary_llm = LLMWithTimeout(gemini_llm, timeout_seconds=effective_timeout)
             logger.info(f"[LLM_FALLBACK] Primary LLM wrapped with {effective_timeout}s timeout")
                 
@@ -702,8 +710,8 @@ def create_llm_with_fallback(
             )
             
             # Always wrap with timeout for production stability
-            # Default: 600 seconds (10 minutes) if not specified
-            effective_timeout = timeout if timeout else 600
+            # [FIX #3] Default: 60 seconds (1 minute) - reduced from 600s to prevent hangs
+            effective_timeout = timeout if timeout else 60
             fallback_llm = LLMWithTimeout(openai_llm, timeout_seconds=effective_timeout)
             logger.info(f"[LLM_FALLBACK] Fallback LLM wrapped with {effective_timeout}s timeout")
                 

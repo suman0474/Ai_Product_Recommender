@@ -350,6 +350,31 @@ class SchemaGenerationDeepAgent:
         """Fetch specifications from Standards RAG."""
         start_time = time.time()
 
+        # ╔════════════════════════════════════════════════════════════════════════╗
+        # ║  [FIX #2] VECTOR STORE HEALTH CHECK                                   ║
+        # ║  Skip standards_rag entirely if vector store is unhealthy             ║
+        # ║  Saves 15-30+ seconds by avoiding the retrieval→generate→retry cycle  ║
+        # ╚════════════════════════════════════════════════════════════════════════╝
+        try:
+            from agentic.vector_store import get_vector_store
+            vector_store = get_vector_store()
+            if not vector_store.is_healthy():
+                health_status = vector_store.get_health_status()
+                logger.warning(
+                    f"[FIX #2] 🔴 VECTOR STORE UNHEALTHY - Skipping standards_rag for {product_type}. "
+                    f"Reason: {health_status.get('reason', 'unknown')}"
+                )
+                return SourceResult(
+                    source=SchemaSourceType.STANDARDS_RAG,
+                    specifications={},
+                    confidence=0.0,
+                    duration_ms=int((time.time() - start_time) * 1000),
+                    success=False,
+                    error=f"Vector store unhealthy: {health_status.get('reason', 'unknown')}"
+                )
+        except Exception as health_check_error:
+            logger.debug(f"[FIX #2] Health check failed (proceeding anyway): {health_check_error}")
+
         try:
             # Get optimized prompt
             fields = self._get_schema_fields(product_type)
