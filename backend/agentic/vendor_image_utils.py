@@ -258,6 +258,147 @@ def fetch_vendor_product_images_serpapi(
         return []
 
 
+def verify_best_image_with_llm(
+    image_urls: List[Dict[str, Any]],
+    vendor_name: str,
+    model_family: Optional[str] = None,
+    product_name: Optional[str] = None,
+    product_type: Optional[str] = None
+) -> Optional[Dict[str, Any]]:
+    """
+    Use LLM to verify and select the best product image URL from search results.
+    
+    Args:
+        image_urls: List of image dictionaries from search engines
+        vendor_name: Vendor/manufacturer name
+        model_family: Optional model family name
+        product_name: Optional product name
+        product_type: Optional product type
+        
+    Returns:
+        Best image dict or None if verification fails
+    """
+    if not image_urls:
+        logger.warning(f"[IMAGE_VERIFY] No images to verify for {vendor_name}")
+        return None
+    
+    try:
+        # Import LLM client
+        import google.generativeai as genai
+        GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY1") or os.getenv("GOOGLE_API_KEY")
+        
+        if not GOOGLE_API_KEY:
+            logger.warning("[IMAGE_VERIFY] No Google API key - skipping LLM verification")
+            return image_urls[0]  # Return first image as fallback
+        
+        # Build context for LLM
+        context_parts = [vendor_name]
+        if model_family:
+            context_parts.append(model_family)
+        if product_name:
+            context_parts.append(product_name)
+        if product_type:
+            context_parts.append(product_type)
+        
+        product_context = " ".join(context_parts)
+        
+        # Prepare image URLs with metadata for LLM
+        image_candidates = []
+        for idx, img in enumerate(image_urls[:5]):  # Limit to top 5 to avoid token limits
+            image_candidates.append({
+                "index": idx,
+                "url": img.get("url", ""),
+                "title": img.get("title", ""),
+                "domain": img.get("domain", ""),
+                "source": img.get("source", "")
+            })
+        
+        # Create prompt for LLM
+        prompt = f"""You are an expert at evaluating product images for industrial equipment and instrumentation.
+
+Product Context:
+- Vendor: {vendor_name}
+- Model Family: {model_family or 'Not specified'}
+- Product Type: {product_type or 'Not specified'}
+- Product Name: {product_name or 'Not specified'}
+
+Image Candidates:
+{chr(10).join([f"{i+1}. URL: {img['url'][:100]}..." + 
+               (f" | Title: {img['title'][:50]}" if img['title'] else "") + 
+               (f" | Domain: {img['domain']}" if img['domain'] else "") 
+               for i, img in enumerate(image_candidates)])}
+
+Task: Analyze these image URLs and their metadata to determine which image is most likely to be:
+1. An actual product photo (not a diagram, screenshot, or unrelated image)
+2. From an official manufacturer source or reputable distributor
+3. High quality and representative of the product
+4. Most relevant to the vendor and product specified
+
+Respond with ONLY a JSON object in this exact format:
+{{
+    "best_index": 0,
+    "confidence": 0.85,
+    "reason": "Brief explanation of why this image is best"
+}}
+
+Where best_index is the 1-based number (1-{len(image_candidates)}) of the best image.
+If uncertain or none are suitable, set confidence below 0.5.
+"""
+
+        # Call LLM for verification
+        logger.info(f"[IMAGE_VERIFY] Verifying {len(image_candidates)} images for {product_context}")
+        
+        genai.configure(api_key=GOOGLE_API_KEY)
+        model = genai.GenerativeModel('gemini-2.0-flash-exp')
+        
+        response = model.generate_content(
+            prompt,
+            generation_config={
+                "temperature": 0.1,  # Low temperature for consistent selection
+                "max_output_tokens": 200
+            }
+        )
+        
+        # Parse LLM response
+        import json
+        import re
+        
+        response_text = response.text.strip()
+        
+        # Extract JSON from response (handle markdown code blocks)
+        if "```json" in response_text:
+            response_text = re.search(r'```json\s*(.*?)\s*```', response_text, re.DOTALL).group(1)
+        elif "```" in response_text:
+            response_text = re.search(r'```\s*(.*?)\s*```', response_text, re.DOTALL).group(1)
+        
+        verification_result = json.loads(response_text)
+        
+        best_index = verification_result.get("best_index", 1) - 1  # Convert to 0-based
+        confidence = verification_result.get("confidence", 0.0)
+        reason = verification_result.get("reason", "No reason provided")
+        
+        logger.info(
+            f"[IMAGE_VERIFY] LLM selected image #{best_index + 1} "
+            f"with confidence {confidence:.2f}: {reason}"
+        )
+        
+        # Only return if confidence is reasonable
+        if 0 <= best_index < len(image_candidates) and confidence >= 0.3:
+            selected_image = image_urls[best_index].copy()
+            selected_image['llm_verified'] = True
+            selected_image['llm_confidence'] = confidence
+            selected_image['llm_reason'] = reason
+            return selected_image
+        else:
+            logger.warning(f"[IMAGE_VERIFY] Low confidence ({confidence}) - using first image")
+            return image_urls[0]
+        
+    except Exception as e:
+        logger.warning(f"[IMAGE_VERIFY] LLM verification failed: {e}", exc_info=True)
+        # Fallback to first image
+        return image_urls[0] if image_urls else None
+
+
 def fetch_vendor_product_images(
     vendor_name: str,
     product_name: Optional[str] = None,
@@ -266,22 +407,57 @@ def fetch_vendor_product_images(
     max_retries: int = 1
 ) -> List[Dict[str, Any]]:
     """
-    Fetch vendor-specific product images with automatic fallback.
-
-    Tries Google Custom Search API first, falls back to SerpAPI if needed.
+    Fetch vendor-specific product images with LLM verification and caching.
+    
+    ENHANCED FLOW:
+    1. Check Azure Blob cache using model_family as key
+    2. If not cached, fetch from search engines (Google CSE → SerpAPI fallback)
+    3. Use LLM to verify and select the best image from results
+    4. Cache the verified image to Azure Blob using model_family
+    5. Return cached image URL
 
     Args:
         vendor_name: Name of the vendor/manufacturer
         product_name: Optional product name
-        model_family: Optional model family
+        model_family: Optional model family (used as cache key)
         product_type: Optional product type
         max_retries: Number of retry attempts on failure
 
     Returns:
         List of image dictionaries with URL, source, etc.
     """
-    logger.info(f"[VENDOR_IMAGES] Fetching images for vendor: {vendor_name}")
+    logger.info(f"[VENDOR_IMAGES] Fetching images for vendor: {vendor_name}, model: {model_family}")
 
+    # =========================================================================
+    # STEP 1: Check Azure Blob cache first
+    # =========================================================================
+    cache_key = model_family or vendor_name
+    
+    try:
+        from azure_blob_utils import get_cached_image
+        
+        cached_image = get_cached_image(vendor_name, cache_key)
+        if cached_image:
+            logger.info(f"[VENDOR_IMAGES] ✓ Cache HIT for {vendor_name} - {cache_key}")
+            # Convert to expected format
+            return [{
+                'url': f"/api/images/{cached_image.get('blob_path', '')}",
+                'title': cached_image.get('title', ''),
+                'source': cached_image.get('source', 'cache'),
+                'domain': cached_image.get('domain', ''),
+                'cached': True,
+                'content_type': cached_image.get('content_type', 'image/jpeg')
+            }]
+    except ImportError:
+        logger.debug("[VENDOR_IMAGES] Azure utils not available, skipping cache check")
+    except Exception as e:
+        logger.warning(f"[VENDOR_IMAGES] Cache check failed: {e}")
+    
+    # =========================================================================
+    # STEP 2: Cache miss - fetch from search engines
+    # =========================================================================
+    logger.info(f"[VENDOR_IMAGES] Cache MISS - searching for {vendor_name}")
+    
     # Try Google CSE first
     images = fetch_vendor_product_images_google_cse(
         vendor_name=vendor_name,
@@ -300,40 +476,81 @@ def fetch_vendor_product_images(
             product_type=product_type
         )
 
-    logger.info(f"[VENDOR_IMAGES] Retrieved {len(images)} images for {vendor_name}")
+    if not images:
+        logger.warning(f"[VENDOR_IMAGES] No images found for {vendor_name}")
+        return []
     
-    # NEW: Cache images and return local/API URLs
-    cached_images = []
+    logger.info(f"[VENDOR_IMAGES] Retrieved {len(images)} candidate images")
     
-    # Use ThreadPoolExecutor to cache images in parallel
-    with ThreadPoolExecutor(max_workers=5) as executor:
-        # Create future for each image caching task
-        future_to_img = {
-            executor.submit(
-                cache_vendor_image, 
-                img["url"], 
-                vendor_name
-            ): img for img in images
-        }
+    # =========================================================================
+    # STEP 3: Use LLM to verify and select the best image
+    # =========================================================================
+    best_image = verify_best_image_with_llm(
+        image_urls=images,
+        vendor_name=vendor_name,
+        model_family=model_family,
+        product_name=product_name,
+        product_type=product_type
+    )
+    
+    if not best_image:
+        logger.warning(f"[VENDOR_IMAGES] LLM verification failed - no images selected")
+        return []
+    
+    logger.info(
+        f"[VENDOR_IMAGES] Selected best image: "
+        f"{best_image.get('url', '')[:100]}... "
+        f"(LLM verified: {best_image.get('llm_verified', False)})"
+    )
+    
+    # =========================================================================
+    # STEP 4: Cache the verified best image to Azure Blob
+    # =========================================================================
+    try:
+        from azure_blob_utils import cache_image
         
-        for future in as_completed(future_to_img):
-            original_img = future_to_img[future]
-            try:
-                cached_result = future.result()
-                if cached_result:
-                    # Update image object with local URL
-                    original_img["url"] = cached_result["url"]
-                    original_img["cached"] = True
-                    original_img["local_path"] = cached_result.get("local_path")
-                    cached_images.append(original_img)
-                else:
-                    # Keep original if caching failed, but it might fail on frontend if CORS/hotlink blocked
-                    cached_images.append(original_img)
-            except Exception as e:
-                logger.warning(f"[VENDOR_IMAGES] Failed to cache image {original_img.get('url')}: {e}")
-                cached_images.append(original_img)
-                
-    return cached_images
+        cache_success = cache_image(
+            vendor_name=vendor_name,
+            model_family=cache_key,
+            image_data=best_image
+        )
+        
+        if cache_success:
+            logger.info(f"[VENDOR_IMAGES] ✓ Cached verified image to Azure Blob for {vendor_name} - {cache_key}")
+            
+            # Return the cached version with API URL
+            from azure_blob_utils import get_cached_image
+            cached_image = get_cached_image(vendor_name, cache_key)
+            if cached_image:
+                return [{
+                    'url': f"/api/images/{cached_image.get('blob_path', '')}",
+                    'title': best_image.get('title', ''),
+                    'source': 'cache',
+                    'domain': best_image.get('domain', ''),
+                    'cached': True,
+                    'llm_verified': best_image.get('llm_verified', False),
+                    'llm_confidence': best_image.get('llm_confidence', 0.0)
+                }]
+        else:
+            logger.warning(f"[VENDOR_IMAGES] Failed to cache image to Azure")
+            
+    except ImportError:
+        logger.debug("[VENDOR_IMAGES] Azure utils not available, skipping cache")
+    except Exception as e:
+        logger.warning(f"[VENDOR_IMAGES] Caching failed: {e}", exc_info=True)
+    
+    # =========================================================================
+    # STEP 5: Fallback - download and serve directly (temporary caching)
+    # =========================================================================
+    logger.info(f"[VENDOR_IMAGES] Azure caching failed, using temporary cache")
+    
+    cached_result = cache_vendor_image(best_image["url"], vendor_name)
+    if cached_result:
+        best_image["url"] = cached_result["url"]
+        best_image["cached"] = True
+        best_image["local_path"] = cached_result.get("local_path")
+    
+    return [best_image]
 
 
 def cache_vendor_image(image_url: str, vendor_name: str) -> Optional[Dict[str, Any]]:
@@ -438,6 +655,7 @@ def fetch_images_for_vendor_matches(
     Enrich vendor matches with product images.
 
     Fetches images for vendor and optionally for specific product models.
+    Uses model family and product type for better LLM verification and caching.
 
     Args:
         vendor_name: Vendor to fetch images for
@@ -448,17 +666,55 @@ def fetch_images_for_vendor_matches(
         Enriched matches with image URLs
     """
     try:
-        # Fetch vendor-level images
-        vendor_images = fetch_vendor_product_images(vendor_name)
+        # Extract model family and product type from first match for context
+        model_family = None
+        product_type = None
+        product_name = None
+        
+        if matches:
+            first_match = matches[0]
+            # Try various field names for model family
+            model_family = (first_match.get('model_family') or 
+                          first_match.get('modelFamily') or 
+                          first_match.get('model_name') or
+                          first_match.get('modelName'))
+            
+            # Try various field names for product type
+            product_type = (first_match.get('product_type') or 
+                          first_match.get('productType') or
+                          first_match.get('category'))
+            
+            # Try various field names for product name
+            product_name = (first_match.get('product_name') or 
+                          first_match.get('productName') or
+                          first_match.get('name'))
+        
+        logger.info(
+            f"[VENDOR_IMAGES] Fetching images for {vendor_name} "
+            f"(model: {model_family}, type: {product_type})"
+        )
+        
+        # Fetch vendor-level images with enhanced context
+        vendor_images = fetch_vendor_product_images(
+            vendor_name=vendor_name,
+            product_name=product_name,
+            model_family=model_family,
+            product_type=product_type
+        )
 
         # Add images to matches
         for match in matches:
             # If we have product-specific images, use those
             if vendor_images:
-                # For now, attach vendor-level images to each match
-                # In future, could do product-specific image search
-                match['product_images'] = vendor_images[:2]  # Top 2 images
+                # Attach vendor-level images to each match
+                # Future enhancement: Could do product-specific image search per match
+                match['product_images'] = vendor_images[:2]  # Top 2 images (but we now only return 1 verified)
                 match['image_source'] = vendor_images[0].get('source', 'unknown') if vendor_images else None
+                
+                # Add LLM verification metadata if available
+                if vendor_images[0].get('llm_verified'):
+                    match['llm_verified_image'] = True
+                    match['llm_confidence'] = vendor_images[0].get('llm_confidence', 0.0)
             else:
                 match['product_images'] = []
                 match['image_source'] = None

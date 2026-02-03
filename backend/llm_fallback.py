@@ -661,17 +661,17 @@ def create_llm_with_fallback(
     if google_key:
         try:
             from langchain_google_genai import ChatGoogleGenerativeAI
-            
-            # Add retry config to underlying client
-            kwargs['max_retries'] = 5 
-            
+
+            # Pass retry only to Gemini; avoid polluting kwargs for OpenAI (prevents "multiple values for max_retries")
+            gemini_kwargs = {k: v for k, v in kwargs.items() if k != "max_retries"}
+            gemini_kwargs["max_retries"] = 5
+
             gemini_llm = ChatGoogleGenerativeAI(
                 model=model,
                 temperature=temperature,
                 google_api_key=google_key,
                 max_output_tokens=max_tokens,
-                transport="rest",
-                **kwargs
+                **gemini_kwargs
             )
             
             # Always wrap with timeout for production stability
@@ -688,14 +688,17 @@ def create_llm_with_fallback(
         try:
             from langchain_openai import ChatOpenAI
             openai_model = get_openai_equivalent(model)
-            
+
+            # Do not pass kwargs['max_retries'] to avoid "multiple values for keyword argument 'max_retries'"
+            openai_kwargs = {k: v for k, v in kwargs.items() if k != "max_retries"}
+
             openai_llm = ChatOpenAI(
                 model=openai_model,
                 temperature=temperature,
                 openai_api_key=openai_key,
                 max_tokens=max_tokens,
                 max_retries=3,
-                **kwargs
+                **openai_kwargs
             )
             
             # Always wrap with timeout for production stability

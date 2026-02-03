@@ -163,10 +163,10 @@ class InternalAPIClient:
         return InternalAPIClient._call('/api/agentic/instrument-detail', data)
 
     @staticmethod
-    def call_product_info(query: str, session_id: str, rag_type: str = None,
+    def call_engenie_chat(query: str, session_id: str, rag_type: str = None,
                           validate: bool = True, entities: list = None, **kwargs) -> Dict[str, Any]:
         """
-        Call the Product Info Query API.
+        Call the EnGenie Chat Query API.
 
         Unified endpoint for knowledge queries with intelligent routing to:
         Index RAG, Standards RAG, Strategy RAG, Deep Agent, or Web Search.
@@ -181,7 +181,7 @@ class InternalAPIClient:
             **kwargs: Additional workflow parameters
 
         Returns:
-            Product Info result with answer, sources, validation metadata
+            EnGenie Chat result with answer, sources, validation metadata
         """
         data = {
             "query": query,
@@ -191,7 +191,7 @@ class InternalAPIClient:
             "entities": entities,
             **kwargs
         }
-        return InternalAPIClient._call('/api/product-info/query', data)
+        return InternalAPIClient._call('/api/engenie-chat/query', data)
 
     @staticmethod
     def call_instrument_identifier(message: str, session_id: str, **kwargs) -> Dict[str, Any]:

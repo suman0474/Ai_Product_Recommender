@@ -14,7 +14,12 @@ import {
   AdvancedParametersSelection,
   InstrumentIdentificationResult,
   AnalysisImageResult,
+  ModifyInstrumentsRequest,
 } from "./types";
+
+
+
+
 
 // Use environment variable for production API URL, fallback to relative path (proxy) for dev
 export const BASE_URL = import.meta.env.VITE_API_URL || "";
@@ -693,7 +698,7 @@ export const getAllFieldDescriptions = async (
 
     console.log(`[BATCH_FIELDS] Fetching ${fields.length} field values for ${productType}`);
 
-    const response = await axios.post(`/get_all_field_descriptions`, {
+    const response = await axios.post(`/api/get_all_field_descriptions`, {
       fields,
       product_type: productType
     });
@@ -784,51 +789,7 @@ export const clearWorkflow = (): void => {
   getSessionManager().clearWorkflow();
 };
 
-/**
- * @deprecated Use classifyRoute() instead - this is kept for backward compatibility
- */
-export const classifyIntent = async (userInput: string, searchSessionId?: string): Promise<IntentClassificationResult> => {
-  console.warn('[DEPRECATED] classifyIntent() - use classifyRoute() instead');
 
-  try {
-    const sessionManager = getSessionManager();
-    const currentWorkflow = sessionManager.getWorkflow();
-
-    const payload: Record<string, any> = {
-      userInput,
-      search_session_id: searchSessionId || sessionManager.getMainThreadId() || 'default',
-    };
-
-    // Pass workflow as hint for backend validation
-    if (currentWorkflow) {
-      payload.workflow_hint = currentWorkflow;
-    }
-
-    const response = await axios.post('/api/intent', payload);
-
-    // Update workflow from backend decision
-    if (response.data.currentWorkflow !== undefined) {
-      if (response.data.currentWorkflow === null) {
-        sessionManager.clearWorkflow();
-      } else {
-        sessionManager.setWorkflow(response.data.currentWorkflow as SessionWorkflowType);
-      }
-    }
-
-    // Refresh TTL on activity
-    sessionManager.refreshWorkflowTTL();
-
-    return response.data;
-  } catch (error: any) {
-    console.error("Intent classification error:", error.response?.data || error.message);
-    return {
-      intent: "other",
-      nextStep: null,
-      resumeWorkflow: false,
-      retryable: !error.response || error.response.status >= 500
-    };
-  }
-};
 
 
 /**
@@ -837,7 +798,7 @@ export const classifyIntent = async (userInput: string, searchSessionId?: string
  * Routes to:
  * - solution: Complex engineering systems requiring multiple instruments
  * - instrument_identifier: Single product requirements
- * - product_info: Questions about products, standards, vendors (opens ProductInfo page)
+ * - engenie_chat: Questions about products, standards, vendors (opens EnGenie Chat)
  * - out_of_domain: Unrelated queries (rejected with helpful message)
  * 
  * @param query User query from UI textarea
@@ -1471,15 +1432,50 @@ export const routeUserInputByIntent = async (
   sessionId?: string
 ): Promise<UnifiedRoutingResult> => {
   try {
-    // Step 1: Classify the intent
-    console.log('[INTENT_ROUTER] Starting intent classification...');
-    const intentResult = await classifyIntent(userInput, sessionId);
+    // Step 1: Classify the intent (Updated to use classifyRoute)
+    console.log('[INTENT_ROUTER] Starting intent classification (classifyRoute)...');
+    const routeResult = await classifyRoute(userInput, undefined, sessionId);
 
-    console.log('[INTENT_ROUTER] Intent result:', {
-      intent: intentResult.intent,
-      isSolution: intentResult.isSolution,
-      nextStep: intentResult.nextStep
+    console.log('[INTENT_ROUTER] Routing result:', {
+      target: routeResult.target_workflow,
+      intent: routeResult.intent,
+      confidence: routeResult.confidence
     });
+
+    // Map classifyRoute result to legacy intent structure for compatibility
+    let legacyIntent = routeResult.intent;
+    const target = routeResult.target_workflow;
+
+    if (target === 'solution') {
+      legacyIntent = 'solution';
+    } else if (target === 'instrument_identifier') {
+      legacyIntent = 'productRequirements';
+    } else if (target === 'engenie_chat') {
+      // Keep 'greeting', 'chitchat' as is, map others to 'knowledgeQuestion'
+      if (!['greeting', 'chitchat', 'other'].includes(legacyIntent)) {
+        legacyIntent = 'knowledgeQuestion';
+      }
+    } else if (target === 'out_of_domain') {
+      legacyIntent = 'other';
+    }
+
+    // Construct workflow suggestion manually (backend agent doesn't send it in to_dict)
+    const suggestion = (legacyIntent === 'knowledgeQuestion') ? {
+      name: 'EnGenie Chat',
+      workflow_id: 'engenie_chat',
+      description: 'Get answers about products, standards, and industrial topics',
+      action: 'openEnGenieChat'
+    } : undefined;
+
+    // Create compatibility object
+    const intentResult = {
+      intent: legacyIntent,
+      isSolution: target === 'solution',
+      suggestWorkflow: suggestion,
+      nextStep: null
+    };
+
+    console.log('[INTENT_ROUTER] Mapped legacy intent:', intentResult.intent);
 
     // Step 2: Route based on intent
     const intent = intentResult.intent;
@@ -1727,7 +1723,7 @@ export const modifyInstruments = async (
       payload.search_session_id = searchSessionId;
     }
 
-    const response = await axios.post(`/api/modify-instruments`, payload);
+    const response = await axios.post(`/api/agentic/modify-instruments`, payload);
     return convertKeysToCamelCase(response.data) as InstrumentModificationResult;
   } catch (error: any) {
     console.error("Instrument modification error:", error.response?.data || error.message);

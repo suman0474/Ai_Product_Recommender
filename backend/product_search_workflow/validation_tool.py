@@ -42,30 +42,36 @@ except ImportError:
 # ║  [FIX #A1] SESSION-LEVEL ENRICHMENT DEDUPLICATION                       ║
 # ║  Prevents redundant Standards RAG calls for same product in one session ║
 # ║  Cache: product_type -> enrichment_result (thread-safe)                 ║
+# ║  [PHASE 1] Using BoundedCache with TTL/LRU to prevent memory leaks      ║
 # ╚═══════════════════════════════════════════════════════════════════════════╝
-_session_enrichment_cache: Dict[str, Dict[str, Any]] = {}
-_enrichment_cache_lock = threading.Lock()
+from agentic.caching.bounded_cache_manager import get_or_create_cache, BoundedCache
+
+_session_enrichment_cache: BoundedCache = get_or_create_cache(
+    name="session_enrichment",
+    max_size=200,           # Max 200 concurrent sessions
+    ttl_seconds=1800        # 30 minute session TTL
+)
 
 
 def _get_session_enrichment(product_type: str, session_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
     """
     Get cached enrichment result for this session.
-    
+
     Args:
         product_type: Product type to look up
         session_id: Session identifier. If None, uses a global shared scope.
     """
     normalized_type = product_type.lower().strip()
     key = f"{session_id}:{normalized_type}" if session_id else normalized_type
-    
-    with _enrichment_cache_lock:
-        return _session_enrichment_cache.get(key)
+
+    # BoundedCache is thread-safe internally, no lock needed
+    return _session_enrichment_cache.get(key)
 
 
 def _cache_session_enrichment(product_type: str, enrichment_result: Dict[str, Any], session_id: Optional[str] = None):
     """
     Cache enrichment result for this session.
-    
+
     Args:
         product_type: Product type to cache
         enrichment_result: Data to cache
@@ -73,18 +79,17 @@ def _cache_session_enrichment(product_type: str, enrichment_result: Dict[str, An
     """
     normalized_type = product_type.lower().strip()
     key = f"{session_id}:{normalized_type}" if session_id else normalized_type
-    
-    with _enrichment_cache_lock:
-        _session_enrichment_cache[key] = enrichment_result
-        logger.info(f"[FIX #A1] Cached enrichment for {key} (size: {len(_session_enrichment_cache)})")
+
+    # BoundedCache is thread-safe internally, no lock needed
+    _session_enrichment_cache.set(key, enrichment_result)
+    logger.info(f"[FIX #A1] Cached enrichment for {key} (size: {len(_session_enrichment_cache)})")
 
 
 def clear_session_enrichment_cache():
     """Clear session enrichment cache (call at start of new session)."""
-    global _session_enrichment_cache
-    with _enrichment_cache_lock:
-        _session_enrichment_cache.clear()
-    logger.info("[FIX #A1] Session enrichment cache cleared")
+    # BoundedCache.clear() is thread-safe internally
+    count = _session_enrichment_cache.clear()
+    logger.info(f"[FIX #A1] Session enrichment cache cleared ({count} entries)")
 
 
 class ValidationTool:

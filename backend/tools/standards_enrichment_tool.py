@@ -23,10 +23,16 @@ logger = logging.getLogger(__name__)
 # PRODUCT TYPE CACHE (Performance Optimization)
 # ============================================================================
 
-_standards_results_cache: Dict[str, Dict[str, Any]] = {}
-_standards_cache_lock = threading.Lock()
-_CACHE_MAX_SIZE = 100  # Max cached product types
-_CACHE_TTL_SECONDS = 600  # 10 minutes cache TTL
+# [PHASE 1] Using BoundedCache with TTL/LRU - max size is now ENFORCED
+from agentic.caching.bounded_cache_manager import get_or_create_cache, BoundedCache
+
+_standards_results_cache: BoundedCache = get_or_create_cache(
+    name="standards_results",
+    max_size=100,           # Max 100 product types (now enforced automatically!)
+    ttl_seconds=600         # 10 minutes cache TTL (automatic expiration)
+)
+_CACHE_MAX_SIZE = 100  # Kept for backwards compatibility
+_CACHE_TTL_SECONDS = 600  # Kept for backwards compatibility
 
 
 def _get_cache_key(product_type: str) -> str:
@@ -35,54 +41,32 @@ def _get_cache_key(product_type: str) -> str:
 
 
 def _get_cached_standards(product_type: str) -> Optional[Dict[str, Any]]:
-    """Get cached standards result for a product type."""
+    """Get cached standards result for a product type (TTL handled automatically by BoundedCache)."""
     key = _get_cache_key(product_type)
-    with _standards_cache_lock:
-        entry = _standards_results_cache.get(key)
-        if entry:
-            # Check TTL
-            if time.time() - entry.get('_cached_at', 0) < _CACHE_TTL_SECONDS:
-                logger.info(f"[StandardsEnrichment] Cache HIT for: {product_type}")
-                return entry.get('data')
-            else:
-                # Expired - remove
-                del _standards_results_cache[key]
-    return None
+    # BoundedCache handles TTL expiration internally
+    result = _standards_results_cache.get(key)
+    if result is not None:
+        logger.info(f"[StandardsEnrichment] Cache HIT for: {product_type}")
+    return result
 
 
 def _cache_standards(product_type: str, result: Dict[str, Any]):
-    """Cache standards result for a product type."""
+    """Cache standards result for a product type (LRU eviction handled automatically)."""
     key = _get_cache_key(product_type)
-    with _standards_cache_lock:
-        # Evict oldest if at max size
-        if len(_standards_results_cache) >= _CACHE_MAX_SIZE:
-            oldest_key = min(_standards_results_cache.keys(), 
-                           key=lambda k: _standards_results_cache[k].get('_cached_at', 0))
-            del _standards_results_cache[oldest_key]
-        
-        _standards_results_cache[key] = {
-            'data': result,
-            '_cached_at': time.time()
-        }
+    # BoundedCache handles max_size and LRU eviction internally
+    _standards_results_cache.set(key, result)
 
 
 def clear_standards_cache():
     """Clear the standards cache."""
-    global _standards_results_cache
-    with _standards_cache_lock:
-        _standards_results_cache.clear()
-    logger.info("[StandardsEnrichment] Cache cleared")
+    count = _standards_results_cache.clear()
+    logger.info(f"[StandardsEnrichment] Cache cleared ({count} entries)")
 
 
 def get_standards_cache_stats() -> Dict[str, Any]:
     """Get cache statistics."""
-    with _standards_cache_lock:
-        return {
-            'size': len(_standards_results_cache),
-            'max_size': _CACHE_MAX_SIZE,
-            'ttl_seconds': _CACHE_TTL_SECONDS,
-            'keys': list(_standards_results_cache.keys())
-        }
+    # BoundedCache provides comprehensive stats
+    return _standards_results_cache.get_stats()
 
 
 # ============================================================================
@@ -98,7 +82,7 @@ class GetApplicableStandardsInput(BaseModel):
 class EnrichSchemaInput(BaseModel):
     """Input for enriching schema with standards"""
     product_type: str = Field(description="Product type")
-    schema: Dict[str, Any] = Field(description="Schema to enrich")
+    schema_data: Dict[str, Any] = Field(description="Schema to enrich", alias="schema")
 
 
 class ValidateAgainstStandardsInput(BaseModel):

@@ -12,7 +12,7 @@
 #   - agentic/api.py
 #   - agentic/session_api.py
 #   - agentic/strategy_rag/strategy_admin_api.py
-#   - tools_api.py
+#   - tools/api.py
 #
 # Usage:
 #   from agentic.api_utils import api_response, handle_errors

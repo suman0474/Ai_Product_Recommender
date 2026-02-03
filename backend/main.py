@@ -47,7 +47,42 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 
 from chaining import setup_langchain_components, create_analysis_chain
-import prompts  # Using compatibility shim (prompts.py) - TODO: Refactor to use sales_agent_tools.py
+# import prompts  # DEPRECATED: Replaced by direct prompts_library usage below
+from prompts_library import load_prompt, load_prompt_sections
+
+# --- PROMPT LIBRARY SETUP ---
+# Load consolidated prompt sections
+_SALES_AGENT_PROMPTS = load_prompt_sections("sales_agent_prompts")
+_SALES_WORKFLOW_PROMPTS = load_prompt_sections("sales_workflow_prompts")
+_INTENT_PROMPTS = load_prompt_sections("intent_prompts")
+_PPI_PROMPTS = load_prompt_sections("potential_product_index_prompts")
+
+
+# Define Constants for Main usage
+SALES_AGENT_MAIN_PROMPT = _SALES_AGENT_PROMPTS["MAIN"]
+SALES_AGENT_GREETING_PROMPT = _SALES_WORKFLOW_PROMPTS["GREETING"]
+SALES_AGENT_FINAL_ANALYSIS_PROMPT = _SALES_AGENT_PROMPTS["MAIN"]
+SALES_AGENT_ERROR_PROMPT = _SALES_AGENT_PROMPTS["MAIN"]
+
+SUMMARY_GENERATION_PROMPT = _SALES_WORKFLOW_PROMPTS["SUMMARY_GENERATION"]
+PARAMETER_SELECTION_PROMPT = _SALES_WORKFLOW_PROMPTS["PARAMETER_SELECTION"]
+REQUIREMENTS_EXTRACTION_PROMPT = _INTENT_PROMPTS["REQUIREMENTS_EXTRACTION"] 
+
+CLASSIFICATION_PROMPT = _INTENT_PROMPTS["CLASSIFICATION"]
+IDENTIFY_INSTRUMENT_PROMPT = load_prompt("instrument_identification_prompt")
+IDENTIFY_QUESTION_PROMPT = load_prompt("question_classification_prompt")
+VALIDATION_PROMPT = load_prompt("schema_validation_prompt")
+VENDOR_ANALYSIS_PROMPT = load_prompt("analysis_tool_vendor_analysis_prompt")
+
+
+VALIDATION_ALERT_INITIAL_PROMPT = "Please review the validation results."
+VALIDATION_ALERT_REPEAT_PROMPT = "Please address the validation issues."
+FEEDBACK_POSITIVE_PROMPT = "Thank you for your positive feedback!"
+FEEDBACK_NEGATIVE_PROMPT = "Thank you for your feedback. We'll use it to improve."
+FEEDBACK_COMMENT_PROMPT = "Thank you for your comment: {comment}"
+MANUFACTURER_DOMAIN_PROMPT = _PPI_PROMPTS["VENDOR_DISCOVERY"]
+
+
 from loading import load_requirements_schema, build_requirements_schema_from_web
 from flask_session import Session
 
@@ -142,7 +177,7 @@ app.register_blueprint(engenie_chat_bp)
 logging.info("EnGenie Chat API blueprint registered at /api/engenie-chat")
 
 # --- Import and Register Tools API Blueprint ---
-from tools_api import tools_bp
+from tools.api import tools_bp
 app.register_blueprint(tools_bp, url_prefix='/api/tools')
 logging.info("Tools API blueprint registered at /api/tools")
 
@@ -451,7 +486,6 @@ def api_intent():
             current_workflow = workflow_memory.get_workflow(search_session_id)
             workflow_to_intent = {
                 "engenie_chat": "knowledgeQuestion",
-                "product_info": "knowledgeQuestion",
                 "instrument_identifier": "productRequirements",
                 "solution": "solution"
             }
@@ -1319,7 +1353,7 @@ def api_sales_agent():
                 context_hint = "Now, let's continue with your product selection."
             
             # Build and execute LLM chain
-            response_chain = prompts.sales_agent_knowledge_question_prompt | components['llm'] | StrOutputParser()
+            response_chain = SALES_AGENT_MAIN_PROMPT | components['llm'] | StrOutputParser()
             llm_response = response_chain.invoke({"user_message": user_message, "context_hint": context_hint})
             
             # Return response without changing workflow step - use the step sent by frontend
@@ -1351,7 +1385,7 @@ def api_sales_agent():
                 }), 200
             
             
-            current_prompt_template = prompts.sales_agent_initial_input_prompt
+            current_prompt_template = SALES_AGENT_MAIN_PROMPT
             next_step = "awaitAdditionalAndLatestSpecs"
             next_step = "awaitAdditionalAndLatestSpecs"
             
@@ -1378,7 +1412,7 @@ def api_sales_agent():
                     # User says NO -> skip directly to showSummary
                     session[asking_state_key] = False
                     # Use LLM to produce the fixed summary-intro sentence
-                    current_prompt_template = prompts.sales_agent_no_additional_specs_prompt
+                    current_prompt_template = SALES_AGENT_MAIN_PROMPT
                     next_step = "showSummary"
                     next_step = "showSummary"
                 elif is_yes:
@@ -1388,7 +1422,7 @@ def api_sales_agent():
                     available_parameters = data_context.get('availableParameters', [])
                     if available_parameters:
                         params_display = format_available_parameters(available_parameters)
-                        current_prompt_template = prompts.sales_agent_yes_additional_specs_prompt
+                        current_prompt_template = SALES_AGENT_MAIN_PROMPT
                     # else:
                     #     prompt_template = "Great! Please enter your additional or latest specifications."
 
@@ -1408,7 +1442,7 @@ def api_sales_agent():
                 session[f'additional_specs_input_{search_session_id}'] = user_message
                 session[asking_state_key] = True  # Reset for next time
                 
-                current_prompt_template = prompts.sales_agent_acknowledge_additional_specs_prompt
+                current_prompt_template = SALES_AGENT_MAIN_PROMPT
                 next_step = "awaitAdvancedSpecs"
                 next_step = "awaitAdvancedSpecs"
         
@@ -1442,7 +1476,7 @@ def api_sales_agent():
                 
                 if parameter_error and user_lower in affirmative_keywords:
                     # User confirms they want to skip after an error
-                    current_prompt_template = prompts.sales_agent_default_prompt
+                    current_prompt_template = SALES_AGENT_MAIN_PROMPT
                     next_step = "showSummary"
                 elif parameter_error and user_lower in negative_keywords:
                     # User wants to retry (or says 'no' to skipping) - fall through to discovery
@@ -1573,21 +1607,21 @@ def api_sales_agent():
                 # Check this FIRST before CASE 2, so "yes" doesn't get caught by the display condition
                 if user_affirmed:
                     # CASE 1 — User said YES: use LLM to ask for values, listing the parameters
-                        current_prompt_template = prompts.sales_agent_advanced_specs_yes_prompt
+                        current_prompt_template = SALES_AGENT_MAIN_PROMPT
                         next_step = "awaitAdvancedSpecs"  # Stay in step to collect values
                     
                 # CASE 2: User says 'no' to adding parameters (normal flow)
                 elif user_denied:
                     # User explicitly declined adding advanced parameters -> go directly to SUMMARY
                     # Use the same summary-intro sentence as in awaitAdditionalAndLatestSpecs
-                    current_prompt_template = prompts.sales_agent_advanced_specs_no_prompt
+                    current_prompt_template = SALES_AGENT_MAIN_PROMPT
                     next_step = "showSummary"
                     
                 # CASE 3: Force the list to display if the user explicitly asks to see it, or empty message
                 elif wants_display or (not user_message.strip() and not total_selected > 0):
                     params_display = format_available_parameters(available_parameters)
 
-                    current_prompt_template = prompts.sales_agent_advanced_specs_display_prompt
+                    current_prompt_template = SALES_AGENT_MAIN_PROMPT
                     next_step = "awaitAdvancedSpecs"
                     
                 # CASE 4: User provided parameter selections/values
@@ -1615,7 +1649,7 @@ def api_sales_agent():
             product_type = data_context.get('productType') or session.get(f'product_type_{search_session_id}')
             
             # Initial prompt is set as a fallback
-            current_prompt_template = prompts.sales_agent_confirm_after_missing_info_prompt
+            current_prompt_template = SALES_AGENT_MAIN_PROMPT
             
             if product_type:
                 try:
@@ -1634,7 +1668,7 @@ def api_sales_agent():
                         session.modified = True
 
                         # Use LLM with a strict prompt so it returns the exact desired message
-                        current_prompt_template = prompts.sales_agent_confirm_after_missing_info_with_params_prompt
+                        current_prompt_template = SALES_AGENT_MAIN_PROMPT
                     # Else: prompt_template remains the one set before the try block
                 except Exception as e:
                     logging.error(f"Error discovering parameters in confirmAfterMissingInfo: {e}", exc_info=True)
@@ -1646,12 +1680,12 @@ def api_sales_agent():
             # Check if user is confirming to proceed with analysis
             user_lower = user_message.lower().strip()
             if user_lower in ['yes', 'y', 'proceed', 'continue', 'run', 'analyze', 'ok', 'okay']:
-                current_prompt_template = prompts.sales_agent_show_summary_proceed_prompt
+                current_prompt_template = SUMMARY_GENERATION_PROMPT
                 next_step = "finalAnalysis"
             else:
                 # First time showing summary - trigger summary generation
                 # The frontend will call handleShowSummaryAndProceed which generates the summary
-                current_prompt_template = prompts.sales_agent_show_summary_intro_prompt
+                current_prompt_template = SUMMARY_GENERATION_PROMPT
                 next_step = "showSummary"  # Stay in showSummary to trigger summary display
             
         elif step == 'finalAnalysis':
@@ -1660,25 +1694,25 @@ def api_sales_agent():
             # Assuming 'requirementsMatch' is a boolean key in each product dict.
             matching_products = [p for p in ranked_products if p.get('requirementsMatch') is True] 
             count = len(matching_products)
-            current_prompt_template = prompts.sales_agent_final_analysis_prompt
+            current_prompt_template = SALES_AGENT_FINAL_ANALYSIS_PROMPT
             next_step = None  # End of workflow
             
         elif step == 'analysisError':
-            current_prompt_template = prompts.sales_agent_analysis_error_prompt
+            current_prompt_template = SALES_AGENT_ERROR_PROMPT
             next_step = "showSummary"  # Allow retry from summary
             
         elif step == 'default':
-            current_prompt_template = prompts.sales_agent_default_prompt
+            current_prompt_template = SALES_AGENT_MAIN_PROMPT
             next_step = current_step or None
             
         # === NEW WORKFLOW STEPS (Added for enhanced functionality) ===
         elif step == 'greeting':
-            current_prompt_template = prompts.sales_agent_greeting_prompt
+            current_prompt_template = SALES_AGENT_GREETING_PROMPT
             next_step = "initialInput"
             
         else:
             # Default fallback for unrecognized steps
-            current_prompt_template = prompts.sales_agent_default_prompt
+            current_prompt_template = SALES_AGENT_MAIN_PROMPT
             next_step = current_step or "greeting"
 
         # --- Build Chain and Generate Response ---
@@ -1828,11 +1862,11 @@ def handle_feedback():
         
         # --- LLM RESPONSE GENERATION ---
         if feedback_type == 'positive':
-            feedback_chain = prompts.feedback_positive_prompt | components['llm'] | StrOutputParser()
+            feedback_chain = ChatPromptTemplate.from_template(FEEDBACK_POSITIVE_PROMPT) | components['llm'] | StrOutputParser()
         elif feedback_type == 'negative':
-            feedback_chain = prompts.feedback_negative_prompt | components['llm'] | StrOutputParser()
+            feedback_chain = ChatPromptTemplate.from_template(FEEDBACK_NEGATIVE_PROMPT) | components['llm'] | StrOutputParser()
         else:  # This handles the case where only a comment is provided
-            feedback_chain = prompts.feedback_comment_prompt | components['llm'] | StrOutputParser()
+            feedback_chain = ChatPromptTemplate.from_template(FEEDBACK_COMMENT_PROMPT) | components['llm'] | StrOutputParser()
 
         llm_response = feedback_chain.invoke({"comment": comment})
 
@@ -1889,7 +1923,7 @@ def identify_instruments():
             reasoning = f"Contains {unrelated_count} strong indicators of non-industrial content (email headers, job/recruitment terms)"
         else:
             # Step 1: Classify the input type using LLM
-            classification_chain = prompts.identify_classification_prompt | components['llm'] | StrOutputParser()
+            classification_chain = CLASSIFICATION_PROMPT | components['llm'] | StrOutputParser()
             classification_response = classification_chain.invoke({"user_input": requirements})
             
             # Clean and parse classification
@@ -1922,7 +1956,7 @@ def identify_instruments():
 
         # CASE 1: Greeting
         if input_type == "greeting":
-            greeting_chain = prompts.identify_greeting_prompt | components['llm'] | StrOutputParser()
+            greeting_chain = SALES_AGENT_GREETING_PROMPT | components['llm'] | StrOutputParser()
             greeting_response = greeting_chain.invoke({"user_input": requirements})
             
             # from testing_utils import standardized_jsonify # Removed
@@ -1938,7 +1972,7 @@ def identify_instruments():
         elif input_type == "requirements":
             session_isolated_requirements = f"[Session: {search_session_id}] - This is an independent instrument identification request. Requirements: {requirements}"
             
-            response_chain = prompts.identify_instrument_prompt | components['llm'] | StrOutputParser()
+            response_chain = IDENTIFY_INSTRUMENT_PROMPT | components['llm'] | StrOutputParser()
             llm_response = response_chain.invoke({"requirements": session_isolated_requirements})
 
             # Clean the LLM response
@@ -1999,7 +2033,7 @@ def identify_instruments():
 
         # CASE 3: Unrelated content - Politely redirect
         elif input_type == "unrelated":
-            unrelated_chain = prompts.identify_unrelated_prompt | components['llm'] | StrOutputParser()
+            unrelated_chain = CLASSIFICATION_PROMPT | components['llm'] | StrOutputParser()
             unrelated_response = unrelated_chain.invoke({"reasoning": reasoning})
             
             # from testing_utils import standardized_jsonify # Removed
@@ -2014,7 +2048,7 @@ def identify_instruments():
 
         # CASE 4: Question - Answer industrial questions or redirect
         elif input_type == "question":
-            question_chain = prompts.identify_question_prompt | components['llm'] | StrOutputParser()
+            question_chain = IDENTIFY_QUESTION_PROMPT | components['llm'] | StrOutputParser()
             question_response = question_chain.invoke({"user_input": requirements})
             
             # Clean and parse question response
@@ -2038,7 +2072,7 @@ def identify_instruments():
                 }, 200)
             except:
                 # Fallback if parsing fails - generate response from LLM without JSON constraint
-                fallback_chain = prompts.identify_fallback_prompt | components['llm'] | StrOutputParser()
+                fallback_chain = CLASSIFICATION_PROMPT | components['llm'] | StrOutputParser()
                 fallback_message = fallback_chain.invoke({"requirements": requirements})
                 
                 return standardized_jsonify({
@@ -2053,7 +2087,7 @@ def identify_instruments():
         else:
             logging.warning(f"[CLASSIFY] Unexpected classification type: {input_type}")
             # Generate dynamic response from LLM
-            unexpected_chain = prompts.identify_unexpected_prompt | components['llm'] | StrOutputParser()
+            unexpected_chain = CLASSIFICATION_PROMPT | components['llm'] | StrOutputParser()
             unexpected_message = unexpected_chain.invoke({"user_input": requirements})
             
             return standardized_jsonify({
@@ -2840,7 +2874,7 @@ def get_manufacturer_domains_from_llm(vendor_name: str) -> list:
     
     try:
         
-        chain = prompts.manufacturer_domain_prompt | components['llm'] | StrOutputParser()
+        chain = MANUFACTURER_DOMAIN_PROMPT | components['llm'] | StrOutputParser()
         
         response = chain.invoke({"vendor_name": vendor_name})
         
@@ -4393,9 +4427,9 @@ def api_validate():
             is_repeat = data.get("is_repeat", False)
 
             if not is_repeat:
-                alert_prompt = prompts.validation_alert_initial_prompt
+                alert_prompt = ChatPromptTemplate.from_template(VALIDATION_ALERT_INITIAL_PROMPT)
             else:
-                alert_prompt = prompts.validation_alert_repeat_prompt
+                alert_prompt = ChatPromptTemplate.from_template(VALIDATION_ALERT_REPEAT_PROMPT)
 
             alert_chain = alert_prompt | components['llm'] | StrOutputParser()
             agent_message = alert_chain.invoke({
@@ -4541,7 +4575,7 @@ def api_additional_requirements():
             reqs_for_llm = '\n'.join([
                 f"- {prettify_req(key)}: {value}" for key, value in combined_reqs.items()
             ])
-            llm_chain = prompts.requirement_explanation_prompt | components['llm'] | StrOutputParser()
+            llm_chain = REQUIREMENTS_EXTRACTION_PROMPT | components['llm'] | StrOutputParser()
             explanation = llm_chain.invoke({
                 "product_type": prettify_req(product_type),
                 "requirements": reqs_for_llm
@@ -4648,7 +4682,7 @@ def api_add_advanced_parameters():
             return jsonify({"error": "Missing user_input"}), 400
 
         # Use LLM to extract selected specifications from user input
-        prompt = prompts.advanced_parameter_selection_prompt
+        prompt = PARAMETER_SELECTION_PROMPT
 
         try:
             chain = prompt | components['llm'] | StrOutputParser()

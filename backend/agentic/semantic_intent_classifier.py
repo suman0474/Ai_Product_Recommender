@@ -186,31 +186,77 @@ class SemanticIntentClassifier:
     def _precompute_signature_embeddings(self):
         """
         Pre-compute all signature embeddings once at startup.
-        Reduces 31 API calls per classification to 0 (all cached).
+        Uses batch processing to reduce latency.
         """
         if self._signatures_precomputed:
             return
         
         all_signatures = ENGENIE_CHAT_SIGNATURES + SOLUTION_WORKFLOW_SIGNATURES
+        missing_signatures = []
         cached_count = 0
-        computed_count = 0
         
-        logger.info(f"[SEMANTIC] Pre-computing {len(all_signatures)} signature embeddings...")
-        
+        # Check what's already cached
         for sig in all_signatures:
+            # Check local cache first
             if sig in self._signature_cache:
                 cached_count += 1
-            else:
+                continue
+                
+            # Check global cache
+            try:
+                from agentic.embedding_cache_manager import get_embedding_cache
+                cache = get_embedding_cache()
+                cached_emb = cache.get(sig)
+                if cached_emb is not None:
+                    self._signature_cache[sig] = cached_emb
+                    cached_count += 1
+                    continue
+            except ImportError:
+                pass
+            
+            # If not in either cache, add to missing list
+            missing_signatures.append(sig)
+            
+        # Batch compute missing signatures
+        computed_count = 0
+        if missing_signatures:
+            logger.info(f"[SEMANTIC] Batch computing {len(missing_signatures)} missing signature embeddings...")
+            try:
+                embeddings_model = self._get_embeddings()
+                
+                if issue_debug:
+                    issue_debug.embedding_call("embedding-001", len(missing_signatures), "semantic_classifier_batch")
+                
+                # Batch API call (much faster than sequential)
+                batch_embeddings = embeddings_model.embed_documents(missing_signatures)
+                
+                # Store in caches
+                from agentic.embedding_cache_manager import get_embedding_cache
                 try:
-                    self._compute_embedding(sig)
+                    global_cache = get_embedding_cache()
+                except ImportError:
+                    global_cache = None
+                
+                for sig, emb in zip(missing_signatures, batch_embeddings):
+                    self._signature_cache[sig] = emb
+                    if global_cache:
+                        global_cache.put(sig, emb)
                     computed_count += 1
-                except Exception as e:
-                    logger.warning(f"[SEMANTIC] Failed to cache signature: {e}")
+                    
+            except Exception as e:
+                logger.error(f"[SEMANTIC] Batch embedding failed: {e}")
+                # Fallback to sequential if batch fails (rare)
+                for sig in missing_signatures:
+                    try:
+                        self._compute_embedding(sig)
+                        computed_count += 1
+                    except Exception as seq_err:
+                        logger.warning(f"[SEMANTIC] Failed to compute signature {sig[:20]}...: {seq_err}")
         
         self._signatures_precomputed = True
         logger.info(
             f"[SEMANTIC] Signature embeddings ready: "
-            f"{cached_count} cached, {computed_count} computed"
+            f"{cached_count} cached, {computed_count} computed (batch)"
         )
     
     def _cosine_similarity(self, a: List[float], b: List[float]) -> float:

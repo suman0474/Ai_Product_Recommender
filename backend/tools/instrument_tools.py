@@ -11,8 +11,12 @@ from langchain_core.output_parsers import JsonOutputParser
 from pydantic import BaseModel, Field
 import os
 from llm_fallback import create_llm_with_fallback
+
 from config import AgenticConfig
-from prompts_library import load_prompt
+from prompts_library import load_prompt, load_prompt_sections
+from tools.standards_enrichment_tool import get_applicable_standards
+import concurrent.futures
+from azure_blob_config import get_azure_blob_connection, Collections
 logger = logging.getLogger(__name__)
 
 
@@ -31,6 +35,15 @@ class IdentifyAccessoriesInput(BaseModel):
     process_context: Optional[str] = Field(default=None, description="Process context")
 
 
+class ModifyInstrumentsInput(BaseModel):
+    """Input for modifying instruments and accessories"""
+    modification_request: str = Field(description="User's request to modify the list")
+    current_instruments: List[Dict[str, Any]] = Field(description="Current list of instruments")
+    current_accessories: List[Dict[str, Any]] = Field(description="Current list of accessories")
+    search_session_id: Optional[str] = Field(default="default", description="Session ID for user context")
+
+
+
 # ============================================================================
 # PROMPTS - Loaded from prompts_library
 # ============================================================================
@@ -39,6 +52,7 @@ INSTRUMENT_IDENTIFICATION_PROMPT = load_prompt("instrument_identification_prompt
 
 ACCESSORIES_IDENTIFICATION_PROMPT = load_prompt("accessories_identification_prompt")
 
+INSTRUMENT_MODIFICATION_PROMPTS = load_prompt_sections("instrument_modification_prompt")
 
 
 # ============================================================================
@@ -285,9 +299,6 @@ def identify_accessories_tool(
             }
         else:
             # Even fallback returned nothing
-            logger.error(f"[Accessory ID] ❌ Both LLM and fallback failed. No accessories identified.")
-            logger.error(f"[Accessory ID] LLM error: {last_error}")
-
             return {
                 "success": False,
                 "accessories": [],
@@ -297,3 +308,232 @@ def identify_accessories_tool(
                 "llm_failure_reason": last_error,
                 "error": "Accessory identification failed - LLM returned invalid response and keyword fallback found no matches"
             }
+
+
+@tool("modify_instruments", args_schema=ModifyInstrumentsInput)
+def modify_instruments_tool(
+    modification_request: str,
+    current_instruments: List[Dict[str, Any]],
+    current_accessories: List[Dict[str, Any]],
+    search_session_id: str = "default"
+) -> Dict[str, Any]:
+    """
+    Modify/refine the identified instruments and accessories list based on user request.
+    Integrating Standards RAG from Azure Blob Storage where applicable.
+    """
+    try:
+        if not modification_request:
+            return {"error": "Modification request is required", "success": False}
+
+        if not current_instruments and not current_accessories:
+            return {
+                "error": "No instruments or accessories to modify. Please identify instruments first.",
+                "success": False
+            }
+
+        # Create a JSON representation of current items for the LLM
+        current_state = {
+            "instruments": current_instruments,
+            "accessories": current_accessories
+        }
+        current_state_json = json.dumps(current_state, indent=2)
+        
+        # 0. FETCH USER DOCUMENTS FROM AZURE BLOB
+        user_documents_context = "No user specific documents found."
+        try:
+            logger.info(f"[Modify Instruments] Fetching user documents for session: {search_session_id}")
+            blob_conn = get_azure_blob_connection()
+            
+            # Use 'documents' collection or 'user_projects' depending on where docs are stored.
+            # Assuming 'documents' for general user uploads/standards.
+            documents_collection = blob_conn['collections']['documents']
+            
+            # Simple metadata search (assuming user_id or session_id is metadata)
+            # Since we only have search_session_id, we look for docs tagged with it.
+            # In a real app, we'd look up user_id from session first.
+            query = {"session_id": search_session_id}
+            user_docs = documents_collection.find(query)
+            
+            if user_docs:
+                docs_summary = []
+                for doc in user_docs[:3]: # Limit to 3 docs
+                    name = doc.get("filename", doc.get("name", "Unknown Document"))
+                    # If we have extracted text (e.g. from a previous ingestion), use it.
+                    # Assuming doc has 'extracted_text' or similar.
+                    # For now, we list metadata as context.
+                    summary = f"Document: {name}\nType: {doc.get('document_type', 'General')}\nDescription: {doc.get('description', '')}"
+                    docs_summary.append(summary)
+                
+                if docs_summary:
+                    user_documents_context = "\n---\n".join(docs_summary)
+                    logger.info(f"[Modify Instruments] Found {len(user_docs)} user documents.")
+            
+        except Exception as e:
+            logger.warning(f"[Modify Instruments] Failed to fetch user documents: {e}")
+            user_documents_context = "Error fetching user documents (ignored)."
+
+
+        # Initialize LLM
+        llm = create_llm_with_fallback(
+            model=AgenticConfig.PRO_MODEL,
+            temperature=0.1,
+            google_api_key=os.getenv("GOOGLE_API_KEY")
+        )
+
+        # 1. GENERATE MODIFICATIONS
+        modification_prompt = INSTRUMENT_MODIFICATION_PROMPTS.get("MODIFICATION_PROMPT", "")
+        # Fallback if section loading fails
+        if not modification_prompt:
+             modification_prompt = load_prompt("instrument_modification_prompt")
+
+        prompt = ChatPromptTemplate.from_template(modification_prompt)
+        parser = JsonOutputParser()
+        chain = prompt | llm | parser
+
+        logger.info(f"[Modify Instruments] Processing request: {modification_request}")
+        
+        try:
+            result = chain.invoke({
+                "current_state": current_state_json,
+                "modification_request": modification_request,
+                "user_documents_context": user_documents_context
+            })
+        except Exception as e:
+            logger.error(f"[Modify Instruments] LLM processing failed: {e}")
+            return {"error": f"Failed to process modification: {str(e)}", "success": False}
+
+        # 2. VALIDATE AND CLEAN RESULT
+        if "instruments" not in result:
+            result["instruments"] = current_instruments
+        if "accessories" not in result:
+            result["accessories"] = current_accessories
+        if "changes_made" not in result:
+            result["changes_made"] = []
+        if "summary" not in result:
+            result["summary"] = "Modifications applied successfully."
+
+        # Ensure required fields
+        for instrument in result.get("instruments", []):
+            if "strategy" not in instrument: instrument["strategy"] = ""
+            if "quantity" not in instrument: instrument["quantity"] = "1"
+        
+        for accessory in result.get("accessories", []):
+            if "strategy" not in accessory: accessory["strategy"] = ""
+            if "quantity" not in accessory: accessory["quantity"] = "1"
+
+        # 3. APPLY STANDARDS (RAG)
+        # We will use get_applicable_standards which uses Azure Blob Storage / Vector Store internally
+        logger.info(f"[Modify Instruments] Applying standards RAG to modified items...")
+        
+        def apply_standards_to_item(item, is_accessory=False):
+            """Apply standards to an instrument or accessory if not already applied"""
+            category = item.get('category', '')
+            if not category:
+                return item
+            
+            # Skip if standards already applied (has standards_specs)
+            if item.get('standards_specs') and len(item.get('standards_specs', {})) > 0:
+                return item
+            
+            try:
+                # Use the existing tool which integrates with Vector Store (backed by Azure Blob docs)
+                standards_result = get_applicable_standards(product_type=category)
+                
+                if standards_result and standards_result.get('success'):
+                    # Add standards specifications
+                    item['standards_specs'] = {
+                        'applicable_standards': standards_result.get('applicable_standards', []),
+                        'certifications': standards_result.get('certifications', []),
+                        'safety_requirements': standards_result.get('safety_requirements', {})
+                    }
+                    item['applicable_standards'] = standards_result.get('applicable_standards', [])
+                    item['standards_summary'] = f"Applicable Standards: {', '.join(standards_result.get('applicable_standards', [])[:3])}"
+                    
+                    # Enhance specifications with standards annotations
+                    original_specs = item.get('specifications', {})
+                    # In a real scenario, we might merge specific standard values, 
+                    # for now we append the applicable standards list to specs for visibility
+                    enhanced_specs = original_specs.copy()
+                    
+                    # Simple enhancement: Add certification requirements if found
+                    certs = standards_result.get('certifications', [])
+                    if certs and 'Certifications' not in enhanced_specs:
+                         enhanced_specs['Certifications'] = ', '.join(certs[:3])
+
+                    item['specifications'] = enhanced_specs
+                    
+                    # Update sample_input
+                    original_sample_input = item.get('sample_input', '')
+                    if 'Standards:' not in original_sample_input and item.get('applicable_standards'):
+                         item['sample_input'] = f"{original_sample_input}. Standards: {', '.join(item['applicable_standards'][:2])}"
+                    
+                    item_type = "accessory" if is_accessory else "instrument"
+                    # logger.info(f"[STANDARDS_RAG] Applied standards to {item_type} {category}")
+                
+                return item
+            except Exception as e:
+                # logger.warning(f"[STANDARDS_RAG] Failed to apply standards to {category}: {e}")
+                return item
+
+        # Apply in parallel
+        with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+            # Instruments
+            inst_futures = {executor.submit(apply_standards_to_item, inst, False): i 
+                           for i, inst in enumerate(result.get("instruments", []))}
+            updated_instruments = [None] * len(result.get("instruments", []))
+            for future in concurrent.futures.as_completed(inst_futures):
+                updated_instruments[inst_futures[future]] = future.result()
+            result["instruments"] = updated_instruments
+
+            # Accessories
+            acc_futures = {executor.submit(apply_standards_to_item, acc, True): i 
+                          for i, acc in enumerate(result.get("accessories", []))}
+            updated_accessories = [None] * len(result.get("accessories", []))
+            for future in concurrent.futures.as_completed(acc_futures):
+                updated_accessories[acc_futures[future]] = future.result()
+            result["accessories"] = updated_accessories
+
+        result["standards_applied"] = True
+
+        # 4. GENERATE FRIENDLY MESSAGE
+        changes_count = len(result.get("changes_made", []))
+        instrument_count = len(result.get("instruments", []))
+        accessory_count = len(result.get("accessories", []))
+        
+        message_prompt_template = INSTRUMENT_MODIFICATION_PROMPTS.get("MESSAGE_GENERATION", "")
+        # Fallback
+        if not message_prompt_template:
+             message_prompt_template = """
+You are Engenie - a friendly industrial automation assistant.
+Changes made: {changes_list}
+Total instruments now: {instrument_count}
+Total accessories now: {accessory_count}
+Generate a brief, friendly confirmation message.
+"""
+
+        try:
+             msg_prompt = ChatPromptTemplate.from_template(message_prompt_template)
+             from langchain_core.output_parsers import StrOutputParser
+             msg_chain = msg_prompt | llm | StrOutputParser()
+             
+             friendly_message = msg_chain.invoke({
+                "changes_list": ", ".join(result.get("changes_made", ["No specific changes noted"])),
+                "instrument_count": instrument_count,
+                "accessory_count": accessory_count
+             })
+             result["message"] = friendly_message.strip()
+        except Exception as msg_error:
+             logger.warning(f"Failed to generate friendly message: {msg_error}")
+             result["message"] = f"I've updated your list! You now have **{instrument_count} instruments** and **{accessory_count} accessories**."
+
+        result["success"] = True
+        return result
+
+    except Exception as e:
+        logger.error(f"Instrument modification tool failed: {e}", exc_info=True)
+        return {
+            "success": False,
+            "instruments": current_instruments,
+            "accessories": current_accessories,
+            "error": str(e)
+        }

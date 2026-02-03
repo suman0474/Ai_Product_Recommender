@@ -65,80 +65,14 @@ logger = logging.getLogger(__name__)
 # PROMPTS
 # =============================================================================
 
-SOLUTION_ANALYSIS_PROMPT = """
-You are Engenie's Solution Analyzer. Analyze the user's solution description and extract:
-1. Industry domain (Oil & Gas, Chemical, Pharma, etc.)
-2. Process type (Distillation, Refining, Manufacturing, etc.)
-3. Key operational parameters (temperature, pressure, flow rates, etc.)
-4. Safety requirements (SIL levels, hazardous areas, etc.)
-5. Environmental conditions
+# Import prompt loader directly from library
+from prompts_library.prompt_loader import load_prompt_sections
 
-User's Solution Description:
-{solution_description}
+def get_solution_analysis_prompt():
+    return load_prompt_sections("solution_workflow_prompts").get("ANALYSIS", "")
 
-Return ONLY valid JSON:
-{{
-    "solution_name": "<descriptive name for the solution>",
-    "industry": "<industry domain>",
-    "process_type": "<type of process>",
-    "key_parameters": {{
-        "temperature_range": "<if mentioned>",
-        "pressure_range": "<if mentioned>",
-        "flow_rates": "<if mentioned>",
-        "materials": ["<materials handled>"]
-    }},
-    "safety_requirements": {{
-        "sil_level": "<SIL level if mentioned>",
-        "atex_zone": "<ATEX zone if mentioned>",
-        "hazardous_area": <true/false>
-    }},
-    "environmental": {{
-        "location": "<indoor/outdoor>",
-        "conditions": "<special conditions>"
-    }},
-    "context_for_instruments": "<summary context to help identify instruments>"
-}}
-"""
-
-SOLUTION_INSTRUMENT_LIST_PROMPT = """
-You are Engenie's Solution Instrument Presenter. Format the identified instruments and 
-accessories for user selection, specifically tailored for the solution context.
-
-Solution Analysis:
-{solution_analysis}
-
-Identified Instruments:
-{instruments}
-
-Identified Accessories:
-{accessories}
-
-Create a numbered list for user selection. Each item should have:
-- number: Sequential number (1, 2, 3, ...)
-- type: "instrument" or "accessory"
-- name: Product name
-- category: Product category  
-- quantity: How many needed
-- purpose: Why this is needed for the solution
-- key_specs: Brief specification summary based on solution requirements
-
-Return ONLY valid JSON:
-{{
-    "formatted_list": [
-        {{
-            "number": 1,
-            "type": "instrument" | "accessory",
-            "name": "<product name>",
-            "category": "<category>",
-            "quantity": <quantity>,
-            "purpose": "<why needed for this solution>",
-            "key_specs": "<specs derived from solution context>"
-        }}
-    ],
-    "total_items": <count>,
-    "solution_summary": "<brief summary of the solution and its instrument needs>"
-}}
-"""
+def get_solution_instrument_list_prompt():
+    return load_prompt_sections("solution_workflow_prompts").get("INSTRUMENT_LIST", "")
 
 
 # =============================================================================
@@ -218,7 +152,7 @@ def analyze_solution_node(state: SolutionState) -> SolutionState:
             google_api_key=os.getenv("GOOGLE_API_KEY")
         )
 
-        prompt = ChatPromptTemplate.from_template(SOLUTION_ANALYSIS_PROMPT)
+        prompt = ChatPromptTemplate.from_template(get_solution_analysis_prompt())
         parser = JsonOutputParser()
         chain = prompt | llm | parser
 
@@ -862,13 +796,19 @@ def _merge_deep_agent_specs_for_display(items: list) -> list:
             for key, val in flattened.items():
                 if not val: continue
                 
-                # Check source in original dict if possible
+                # Check source in original dict/object so we can show [STANDARDS] or [INFERRED]
                 source_label = ""
-                if key in combined_specs and isinstance(combined_specs[key], dict):
-                    src = combined_specs[key].get("source", "")
+                raw = combined_specs.get(key)
+                if raw is not None:
+                    src = None
+                    if isinstance(raw, dict):
+                        src = raw.get("source", "")
+                    else:
+                        src = getattr(raw, "source", None) or ""
                     if src == "standards":
                         source_label = " [STANDARDS]"
-                    elif src == "llm_generated":
+                    elif src in ("llm_generated", "database"):
+                        # "database" = non-standards from batch (user/LLM); show as [INFERRED]
                         source_label = " [INFERRED]"
                 
                 # Helper to check validity
@@ -948,7 +888,7 @@ def format_solution_list_node(state: SolutionState) -> SolutionState:
             google_api_key=os.getenv("GOOGLE_API_KEY")
         )
 
-        prompt = ChatPromptTemplate.from_template(SOLUTION_INSTRUMENT_LIST_PROMPT)
+        prompt = ChatPromptTemplate.from_template(get_solution_instrument_list_prompt())
         parser = JsonOutputParser()
         chain = prompt | llm | parser
 

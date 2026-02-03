@@ -19,6 +19,7 @@ Usage:
 """
 
 import logging
+from datetime import datetime
 from typing import Dict, Any
 from flask import Blueprint, request, jsonify, session
 
@@ -30,7 +31,8 @@ from .orchestrator_utils import (
     get_or_create_instance,
     complete_instance_with_result,
     start_background_cleanup,
-    validate_main_thread_id
+    validate_main_thread_id,
+    extract_user_from_main_thread_id
 )
 
 # Import consolidated decorators and utilities
@@ -107,6 +109,12 @@ def start_session():
     # Create session
     orchestrator = get_session_orchestrator()
 
+    # RESTRICTION: Only create/manage session for specific user 'Daman'
+    # Strictly reject all other users (no default/stateless sessions)
+    if user_id != 'Daman':
+        logger.warning(f"[SESSION_API] Session creation blocked for user '{user_id}' (Only 'Daman' allowed)")
+        return api_response(False, error="Session creation restricted to authorized users only", status_code=403)
+
     # Check if session already exists
     existing = orchestrator.get_session_context(main_thread_id)
     if existing:
@@ -166,6 +174,12 @@ def heartbeat():
     if not main_thread_id:
         return api_response(False, error="main_thread_id is required", status_code=400)
 
+    # RESTRICTION: Check usage allowed
+    user_id = extract_user_from_main_thread_id(main_thread_id)
+    if user_id != 'Daman':
+        # Strictly reject (do not simulate success)
+        return api_response(False, error="Session not authorized", status_code=403)
+
     orchestrator = get_session_orchestrator()
     success = orchestrator.heartbeat(main_thread_id)
 
@@ -220,6 +234,15 @@ def validate_session(main_thread_id: str):
     """
     if not main_thread_id:
         return api_response(False, error="main_thread_id is required", status_code=400)
+
+    # RESTRICTION: Check usage allowed
+    user_id = extract_user_from_main_thread_id(main_thread_id)
+    if user_id != 'Daman':
+        # Return invalid ensuring no session is assumed
+        return api_response(True, data={
+            "valid": False,
+            "reason": "Session restricted to authorized users"
+        })
 
     orchestrator = get_session_orchestrator()
     session_ctx = orchestrator.get_session_context(main_thread_id)
@@ -309,6 +332,11 @@ def end_session():
 
     if not main_thread_id:
         return api_response(False, error="main_thread_id is required", status_code=400)
+
+    # RESTRICTION: Check usage allowed
+    user_id = extract_user_from_main_thread_id(main_thread_id)
+    if user_id != 'Daman':
+        return api_response(False, error="Session not found or unauthorized", status_code=404)
 
     # End session
     orchestrator = get_session_orchestrator()

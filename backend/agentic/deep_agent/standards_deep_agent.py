@@ -258,6 +258,12 @@ DEEP_AGENT_LLM_MODEL = "gemini-2.5-flash-lite"
 # Minimum number of specifications that Deep Agent RAG must generate
 MIN_STANDARDS_SPECS_COUNT = 30
 
+# Maximum number of specifications per item to prevent specification explosion
+MAX_SPECS_PER_ITEM = 100
+
+# Per-domain cap so one domain cannot return 1000+ specs (reduces explosion before merge)
+MAX_SPECS_PER_DOMAIN = 50
+
 # Maximum iterations to prevent infinite loops
 MAX_STANDARDS_ITERATIONS = 5
 
@@ -1007,6 +1013,14 @@ def _extract_additional_specs_from_domain(
         new_specs = result.get("specifications", {})
         new_constraints = result.get("constraints", [])
 
+        # Cap per-domain first to avoid one domain returning 1000+ specs (e.g. communication 1320)
+        if len(new_specs) > MAX_SPECS_PER_DOMAIN:
+            logger.warning(f"[ITERATIVE] Domain {domain} returned {len(new_specs)} specs, capping to {MAX_SPECS_PER_DOMAIN} per domain")
+            new_specs = dict(list(new_specs.items())[:MAX_SPECS_PER_DOMAIN])
+        if len(new_specs) > MAX_SPECS_PER_ITEM:
+            logger.warning(f"[ITERATIVE] Domain {domain} returned {len(new_specs)} specs, capping to {MAX_SPECS_PER_ITEM}")
+            new_specs = dict(list(new_specs.items())[:MAX_SPECS_PER_ITEM])
+
         logger.info(f"[ITERATIVE] Domain {domain}: Found {len(new_specs)} new specs")
 
         return {
@@ -1219,6 +1233,12 @@ def run_standards_deep_agent(
             if added_count == 0:
                 logger.warning(f"[DEEP_AGENT] Iteration {iteration}: No new specs added, stopping iterations")
                 iteration_notes.append(f"Iteration {iteration}: Stopped - no new specs could be extracted")
+                break
+                
+            # Check if we exceeded MAX_SPECS_PER_ITEM
+            if _count_valid_specs(all_specifications) >= MAX_SPECS_PER_ITEM:
+                logger.warning(f"[DEEP_AGENT] Iteration {iteration}: Hit MAX specs cap ({MAX_SPECS_PER_ITEM}), stopping iterations")
+                iteration_notes.append(f"Iteration {iteration}: Stopped - Max specs cap reached")
                 break
 
         # =================================================================
@@ -1483,24 +1503,34 @@ def run_standards_deep_agent_batch(
             relevant_items = []
             for i, item in enumerate(items):
                 item_name = item.get('name', f'Item {i+1}')
-                # Check if this domain is mapped to this item
+                
+                should_include = False
+                
+                # 1. Check explicit mapping from planner
                 if item_domain_mapping.get(item_name):
                     if domain in item_domain_mapping[item_name]:
-                        relevant_items.append({
-                            "index": i,
-                            "name": item_name,
-                            "category": item.get('category', ''),
-                            "sample_input": item.get('sample_input', '')[:200]
-                        })
-                else:
-                    # Fallback: include all items for safety domain
-                    if domain == "safety":
-                        relevant_items.append({
-                            "index": i,
-                            "name": item_name,
-                            "category": item.get('category', ''),
-                            "sample_input": item.get('sample_input', '')[:200]
-                        })
+                        should_include = True
+                
+                # 2. Check universal domains (ALWAYS include for these)
+                # "safety" and "accessories" applies to almost everything or should be checked at least
+                if domain in ["safety", "accessories"]:
+                    should_include = True
+                    
+                # 3. Fallback: If item has NO mapping, include it? 
+                # (Existing logic did this only if mapped domains didn't match, but implied by 1508)
+                if not item_domain_mapping.get(item_name):
+                    # If this item wasn't mentioned by planner at all, 
+                    # and we are running a domain that was selected as "relevant" globally...
+                    # Default: include it.
+                    should_include = True
+
+                if should_include:
+                    relevant_items.append({
+                        "index": i,
+                        "name": item_name,
+                        "category": item.get('category', ''),
+                        "sample_input": item.get('sample_input', '')[:200]
+                    })
             
             if not relevant_items:
                 # Include all items if no specific mapping
@@ -1532,12 +1562,16 @@ def run_standards_deep_agent_batch(
                     "document_content": document_cache[domain][:25000]  # Limit context
                 })
                 
-                logger.info(f"[BATCH-PARALLEL] Domain '{domain}' completed - {len(worker_result.get('items_results', []))} item results")
+                # Debug: Log worker result keys to help diagnose field name mismatches
+                logger.debug(f"[BATCH-PARALLEL] Domain '{domain}' worker result keys: {list(worker_result.keys())}")
+                
+                items_results = worker_result.get("items_results", [])
+                logger.info(f"[BATCH-PARALLEL] Domain '{domain}' completed - {len(items_results)} item results")
                 
                 return {
                     "domain": domain,
                     "domain_name": STANDARD_DOMAINS.get(domain, {}).get("name", domain),
-                    "items_results": worker_result.get("items_results", []),
+                    "items_results": items_results,
                     "warnings": worker_result.get("warnings", [])
                 }
                 
@@ -1584,10 +1618,14 @@ def run_standards_deep_agent_batch(
         synth_parser = JsonOutputParser()
         synth_chain = synth_prompt | llm | synth_parser
         
-        if not all_worker_results:
-            logger.warning("[BATCH] Skipping synthesis - no worker results (no documents found)")
+        # Check if we have any actual item results (not just empty worker results)
+        total_item_results = sum(len(wr.get("items_results", [])) for wr in all_worker_results)
+        
+        if not all_worker_results or total_item_results == 0:
+            logger.warning(f"[BATCH] Skipping synthesis - no meaningful worker results (total items: {total_item_results})")
             items_final_specs = []
         else:
+            logger.info(f"[BATCH] Synthesizing {total_item_results} item results from {len(all_worker_results)} domains...")
             synth_result = synth_chain.invoke({
                 "items_list": json.dumps(items_list, indent=2),
                 "worker_results": json.dumps(all_worker_results, indent=2)[:50000]  # Limit context
@@ -1747,6 +1785,11 @@ def run_standards_deep_agent_batch(
                         standards_specs = enriched_item.get("standards_specifications", {})
 
                         for key, value in new_specs.items():
+                            # Check max cap before adding more specs
+                            if len(combined_specs) >= MAX_SPECS_PER_ITEM:
+                                logger.warning(f"[BATCH] Item '{item_info['name']}' reached max spec cap ({MAX_SPECS_PER_ITEM}), stopping additions")
+                                break
+                            
                             normalized_key = key.lower().replace(" ", "_").replace("-", "_")
                             existing_keys = {
                                 k.lower().replace(" ", "_").replace("-", "_")
@@ -1773,8 +1816,11 @@ def run_standards_deep_agent_batch(
 
                         logger.info(f"[BATCH] Item '{item_info['name']}': Added {added_count} specs from {domain}, total: {item_info['current_count']}")
 
-                        # Check if item has reached minimum
-                        if item_info["current_count"] >= MIN_STANDARDS_SPECS_COUNT:
+                        # Check if item has reached minimum OR max cap
+                        if item_info["current_count"] >= MAX_SPECS_PER_ITEM:
+                            items_needing_more.remove(item_info)
+                            logger.info(f"[BATCH] ✓ Item '{item_info['name']}' reached max cap ({item_info['current_count']}/{MAX_SPECS_PER_ITEM} specs)")
+                        elif item_info["current_count"] >= MIN_STANDARDS_SPECS_COUNT:
                             items_needing_more.remove(item_info)
                             logger.info(f"[BATCH] ✓ Item '{item_info['name']}' reached minimum ({item_info['current_count']} specs)")
 

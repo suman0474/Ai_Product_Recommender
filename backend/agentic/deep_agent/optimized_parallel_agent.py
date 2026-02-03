@@ -170,7 +170,7 @@ def extract_user_specs_with_shared_llm(
 LLM_SPECS_PROMPT = _OPT_PARALLEL_PROMPTS["LLM_SPECS"]
 
 # FIX: Hard limit to prevent specification explosion
-MAX_SPECS_PER_ITEM = 60
+MAX_SPECS_PER_ITEM = 100
 
 
 def generate_llm_specs_with_shared_llm(
@@ -459,6 +459,46 @@ def _normalize_spec_key(key: str) -> str:
     return key.strip().lower().replace(" ", "_").replace("-", "_")
 
 
+def is_valid_spec_value(value: Any) -> bool:
+    """
+    Check if a specification value is valid (not N/A, Not Specified, etc).
+    
+    Args:
+        value: The value to check
+        
+    Returns:
+        True if valid, False if it matches invalid patterns
+    """
+    if value is None:
+        return False
+        
+    val_str = str(value).lower().strip()
+    
+    # Exact match invalid values
+    invalid_exact = {
+        "null", "none", "", "extracted value or null", 
+        "not specified", "not_specified", "n/a", "unknown",
+        "fail", "error", "no value found", "not found",
+        "not applicable", "value not found", "not defined",
+        "none provided", "-", "see datasheet", "not mentioned"
+    }
+    
+    if val_str in invalid_exact:
+        return False
+        
+    # Substring checks
+    if "not specified" in val_str:
+        return False
+    if "not applicable" in val_str:
+        return False
+    if "no value" in val_str:
+        return False
+    if "unknown" in val_str and len(val_str) < 10:  # "Unknown" is bad, "Unknown failure mode" might be ok?
+        return False
+        
+    return True
+
+
 def deduplicate_and_merge_specifications(
     user_specs: Dict[str, Any],
     llm_specs: Dict[str, Any],
@@ -486,6 +526,11 @@ def deduplicate_and_merge_specifications(
                 timestamp=timestamp
             )
     
+    # Check max cap after user specs
+    if len(merged) >= MAX_SPECS_PER_ITEM:
+        logger.info(f"[MERGE] Reached max spec cap ({MAX_SPECS_PER_ITEM}) from user specs, returning early")
+        return merged
+    
     # Second: Standards specs
     for key, value_data in standards_specs.items():
         norm_key = _normalize_spec_key(key)
@@ -501,7 +546,8 @@ def deduplicate_and_merge_specifications(
             confidence = 0.9
             std_ref = None
 
-        if value and str(value).lower() not in ["null", "none", "", "extracted value or null", "not specified", "not specified (standards)"]:
+        # FIX: Strict filtering using shared helper
+        if is_valid_spec_value(value):
             seen_keys.add(norm_key)
             merged[key] = SpecificationSource(
                 value=value,
@@ -510,6 +556,11 @@ def deduplicate_and_merge_specifications(
                 standard_reference=std_ref,
                 timestamp=timestamp
             )
+        
+        # Check max cap during standards processing
+        if len(merged) >= MAX_SPECS_PER_ITEM:
+            logger.info(f"[MERGE] Reached max spec cap ({MAX_SPECS_PER_ITEM}) after standards, skipping remaining")
+            return merged
     
     # Third: LLM specs
     for key, value_data in llm_specs.items():
@@ -524,7 +575,9 @@ def deduplicate_and_merge_specifications(
             value = value_data
             confidence = 0.7
 
-        if value and str(value).lower() not in ["null", "none", "", "not specified"]:
+        
+        # FIX: Strict filtering using shared helper
+        if is_valid_spec_value(value):
             seen_keys.add(norm_key)
             merged[key] = SpecificationSource(
                 value=value,
@@ -533,6 +586,11 @@ def deduplicate_and_merge_specifications(
                 standard_reference=None,
                 timestamp=timestamp
             )
+            
+            # Check max cap during LLM processing
+            if len(merged) >= MAX_SPECS_PER_ITEM:
+                logger.info(f"[MERGE] Reached max spec cap ({MAX_SPECS_PER_ITEM}) during LLM specs, stopping")
+                break
     
     return merged
 
@@ -615,31 +673,27 @@ def run_optimized_parallel_enrichment(
     user_specs_results = {}
     llm_specs_results = {}
 
-    logger.info(f"[OPT_PARALLEL] Phase 2: Processing {len(items)} products in parallel...")
+    logger.info(f"[OPT_PARALLEL] Phase 2: Processing {len(items)} products (max {max_parallel_products} concurrent to reduce 503 risk)...")
 
-    # Use global executor for bounded thread pool (max 16 workers globally)
+    # Process in chunks to limit concurrent Gemini calls and reduce 503 "model overloaded" errors
     executor = get_global_executor()
-    future_to_item = {
-        executor.submit(
-            process_single_product,
-            item,
-            user_input,
-            llm
-        ): item
-        for item in items
-    }
-
-    for future in as_completed(future_to_item):
-        item = future_to_item[future]
-        try:
-            item_name, user_specs, llm_specs = future.result()
-            user_specs_results[item_name] = user_specs
-            llm_specs_results[item_name] = llm_specs
-        except Exception as e:
-            item_name = item.get("name", "Unknown")
-            logger.error(f"[OPT_PARALLEL] Failed for {item_name}: {e}")
-            user_specs_results[item_name] = {}
-            llm_specs_results[item_name] = {}
+    for chunk_start in range(0, len(items), max_parallel_products):
+        chunk = items[chunk_start : chunk_start + max_parallel_products]
+        future_to_item = {
+            executor.submit(process_single_product, item, user_input, llm): item
+            for item in chunk
+        }
+        for future in as_completed(future_to_item):
+            item = future_to_item[future]
+            try:
+                item_name, user_specs, llm_specs = future.result()
+                user_specs_results[item_name] = user_specs
+                llm_specs_results[item_name] = llm_specs
+            except Exception as e:
+                item_name = item.get("name", "Unknown")
+                logger.error(f"[OPT_PARALLEL] Failed for {item_name}: {e}")
+                user_specs_results[item_name] = {}
+                llm_specs_results[item_name] = {}
     
     phase2_time = time.time() - phase2_start
     logger.info(f"[OPT_PARALLEL] Phase 2: All products done in {phase2_time:.2f}s")
@@ -797,6 +851,22 @@ def run_optimized_parallel_enrichment(
                 enriched_item["specifications"][k] = f"{v.value} ({source_label})"
             else:
                 enriched_item["specifications"][k] = str(v)
+                
+        # DOUBLE CHECK: Filter out any "Not Specified (SOURCE)" if they slipped through
+        final_specs = {}
+        for k, v in enriched_item["specifications"].items():
+            # Check if the value part (before the source) is valid
+            # e.g. "Not Specified (STANDARDS)" -> "Not Specified"
+            val_part = str(v)
+            if "(" in val_part and val_part.endswith(")"):
+                val_part = val_part.rsplit("(", 1)[0].strip()
+            
+            if is_valid_spec_value(val_part):
+                final_specs[k] = v
+            else:
+                logger.warning(f"[OPT_PARALLEL] Filtered invalid display value for {k}: {v}")
+                
+        enriched_item["specifications"] = final_specs
         
         enriched_item["standards_info"] = {
             "enrichment_status": "success",

@@ -18,9 +18,10 @@ STORAGE: Azure Blob Storage (primary and only storage).
 import logging
 import os
 import io
+import json
 import time
 import threading
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from datetime import datetime
 from PIL import Image
 import google.genai as genai
@@ -52,19 +53,118 @@ if GOOGLE_API_KEY:
 # Prevents duplicate concurrent LLM calls for the same product type.
 # Only the first request generates; subsequent concurrent requests wait for the result.
 
-_generation_lock = threading.Lock()  # Lock for single execution
-_pending_requests: Dict[str, threading.Event] = {}  # Track pending requests
-_pending_results: Dict[str, Any] = {}  # Store results for pending requests
-_pending_lock = threading.Lock()
+from agentic.caching.bounded_cache_manager import get_or_create_cache, BoundedCache
 
-# FIX: Global generation cache to prevent duplicate generation across sessions
-_global_generation_cache: Dict[str, float] = {}  # product_type -> last_gen_timestamp
-_CACHE_EXPIRY_SECONDS = 3600  # 1 hour
+_generation_lock = threading.Lock()  # Lock for single execution
+
+# FIX: Bounded caches with automatic TTL expiration and LRU eviction
+# Prevents unbounded memory growth in long-running sessions
+_global_generation_cache: BoundedCache = get_or_create_cache(
+    name="image_generation",
+    max_size=500,        # Limit to 500 product types
+    ttl_seconds=3600     # 1 hour expiry
+)
+
+_pending_requests_cache: BoundedCache = get_or_create_cache(
+    name="image_pending_requests",
+    max_size=100,        # Limit pending requests
+    ttl_seconds=300      # 5 minute timeout for pending requests
+)
+
+_pending_results_cache: BoundedCache = get_or_create_cache(
+    name="image_pending_results",
+    max_size=100,
+    ttl_seconds=300
+)
+
+_CACHE_EXPIRY_SECONDS = 3600  # 1 hour (kept for backwards compatibility)
 
 # FIX #3: Rate limiting throttling - prevents thundering herd
 _last_request_time = 0  # Timestamp of last LLM request
 _throttle_lock = threading.Lock()
 _MIN_REQUEST_INTERVAL = 2.0  # Minimum 2 seconds between requests to avoid rate limits
+
+
+# FIX #4: Failure Tracking & Retry Persistence
+class FailedGenerationTracker:
+    """
+    Tracks failed image generation attempts to support robust retries.
+    Persists data to disk to survive application restarts.
+    """
+    def __init__(self, persistence_file: str = "failed_image_generations.json"):
+        self.persistence_file = os.path.join(os.getcwd(), persistence_file)
+        self.failures: Dict[str, Dict[str, Any]] = {}  # product_type -> metadata
+        self.lock = threading.Lock()
+        self._load()
+
+    def _load(self):
+        """Load failure registry from disk."""
+        if os.path.exists(self.persistence_file):
+            try:
+                with open(self.persistence_file, 'r') as f:
+                    self.failures = json.load(f)
+                logger.info(f"[TRACKER] Loaded {len(self.failures)} failed image generations from disk")
+            except Exception as e:
+                logger.warning(f"[TRACKER] Failed to load failure registry: {e}")
+                self.failures = {}
+
+    def _save(self):
+        """Save failure registry to disk."""
+        try:
+            with open(self.persistence_file, 'w') as f:
+                json.dump(self.failures, f, indent=2)
+        except Exception as e:
+            logger.error(f"[TRACKER] Failed to save failure registry: {e}")
+
+    def record_failure(self, product_type: str, error_reason: str = "unknown"):
+        """Record a failure for a product type."""
+        normalized_type = product_type.strip().lower().replace(" ", "").replace("_", "").replace("-", "")
+        
+        with self.lock:
+            if normalized_type not in self.failures:
+                self.failures[normalized_type] = {
+                    "product_type": product_type,
+                    "first_failure": datetime.utcnow().isoformat(),
+                    "retry_count": 0,
+                    "last_attempt": datetime.utcnow().isoformat(),
+                    "error_reason": error_reason,
+                    "status": "pending_retry"
+                }
+            else:
+                entry = self.failures[normalized_type]
+                # Increment retry count
+                entry["retry_count"] = entry.get("retry_count", 0) + 1
+                entry["last_attempt"] = datetime.utcnow().isoformat()
+                entry["error_reason"] = error_reason
+                
+                # Check max retries (User requested max 2 total attempts -> 1 retry)
+                if entry["retry_count"] >= 1: # 0 = first failure, 1 = first retry failure
+                    entry["status"] = "permanently_failed"
+                    logger.warning(f"[TRACKER] Product '{product_type}' reached max retries (2 total attempts). Marking permanently failed.")
+            
+            self._save()
+            logger.info(f"[TRACKER] Recorded failure for '{product_type}' (Total attempts: {self.failures[normalized_type]['retry_count'] + 1})")
+
+    def get_pending_retries(self) -> List[Dict[str, Any]]:
+        """Get list of items that need retry."""
+        pending = []
+        with self.lock:
+            for key, data in self.failures.items():
+                if data.get("status") == "pending_retry":
+                    pending.append(data)
+        return pending
+
+    def mark_success(self, product_type: str):
+        """Remove item from failure tracker upon success."""
+        normalized_type = product_type.strip().lower().replace(" ", "").replace("_", "").replace("-", "")
+        with self.lock:
+            if normalized_type in self.failures:
+                del self.failures[normalized_type]
+                self._save()
+                logger.info(f"[TRACKER] Cleared failure record for '{product_type}' (Success)")
+
+# Global tracker instance
+_failure_tracker = FailedGenerationTracker()
 
 
 def _apply_request_throttle():
@@ -802,11 +902,10 @@ def fetch_generic_product_image(product_type: str) -> Optional[Dict[str, Any]]:
     normalized_type = product_type.strip().lower().replace(" ", "").replace("_", "").replace("-", "")
 
     # FIX: Check global generation cache first to prevent duplicate generation
-    global _global_generation_cache
+    # Using BoundedCache - TTL is handled automatically
     with _generation_lock:
-        if normalized_type in _global_generation_cache:
-            last_gen = _global_generation_cache[normalized_type]
-            if time.time() - last_gen < _CACHE_EXPIRY_SECONDS:
+        last_gen = _global_generation_cache.get(normalized_type)
+        if last_gen is not None:
                 logger.info(f"[FETCH] Global cache: '{product_type}' generated recently, checking Azure...")
                 # Already generated recently, try Azure cache
                 azure_image = get_generic_image_from_azure(product_type)
@@ -982,19 +1081,21 @@ def fetch_generic_product_image(product_type: str) -> Optional[Dict[str, Any]]:
 
 
     # Step 2: Check if generation is already in-progress for this product type
-    with _pending_lock:
-        if normalized_type in _pending_requests:
-            # Another request is already generating this image - wait for it
-            logger.info(f"[FETCH] Generation already in-progress for '{product_type}', waiting...")
-            event = _pending_requests[normalized_type]
-        else:
-            # We are the first - mark as in-progress
-            event = threading.Event()
-            _pending_requests[normalized_type] = event
-            _pending_results[normalized_type] = None
+    # Using BoundedCache for automatic cleanup of stale pending requests
+    existing_event = _pending_requests_cache.get(normalized_type)
+    if existing_event is not None:
+        # Another request is already generating this image - wait for it
+        logger.info(f"[FETCH] Generation already in-progress for '{product_type}', waiting...")
+        event = existing_event
+    else:
+        # We are the first - mark as in-progress
+        event = threading.Event()
+        _pending_requests_cache.set(normalized_type, event)
+        _pending_results_cache.set(normalized_type, None)
 
-    # If we're waiting for another request
-    if event.is_set() or (normalized_type in _pending_requests and _pending_requests[normalized_type] != event):
+    # If we're waiting for another request (event already existed)
+    current_event = _pending_requests_cache.get(normalized_type)
+    if event.is_set() or (current_event is not None and current_event != event):
         # Wait for the event with timeout
         wait_result = event.wait(timeout=120)  # Wait up to 2 minutes
 
@@ -1020,9 +1121,9 @@ def fetch_generic_product_image(product_type: str) -> Optional[Dict[str, Any]]:
     logger.info(f"[FETCH] Cache miss for '{product_type}', generating image with Gemini Imagen 4.0...")
 
     try:
-        # FIX: Record generation attempt in global cache
+        # FIX: Record generation attempt in global cache (BoundedCache handles TTL automatically)
         with _generation_lock:
-            _global_generation_cache[normalized_type] = time.time()
+            _global_generation_cache.set(normalized_type, time.time())
 
         generated_image_data = _generate_image_with_llm(product_type)
 
@@ -1032,19 +1133,21 @@ def fetch_generic_product_image(product_type: str) -> Optional[Dict[str, Any]]:
 
             if azure_cache_success:
                 logger.info(f"[FETCH] ✓ Successfully generated and cached LLM image for '{product_type}'")
+                
+                # FIX 4: Mark success in tracker
+                _failure_tracker.mark_success(product_type)
 
                 # Retrieve the cached image to get the URL
                 azure_image = get_generic_image_from_azure(product_type)
                 if azure_image:
                     backend_url = f"/api/images/{azure_image.get('azure_blob_path', '')}"
 
-                    # Notify waiting requests
-                    with _pending_lock:
-                        if normalized_type in _pending_requests:
-                            _pending_requests[normalized_type].set()
-                            del _pending_requests[normalized_type]
-                        if normalized_type in _pending_results:
-                            del _pending_results[normalized_type]
+                    # Notify waiting requests and cleanup (BoundedCache handles via delete)
+                    pending_event = _pending_requests_cache.get(normalized_type)
+                    if pending_event is not None:
+                        pending_event.set()
+                        _pending_requests_cache.delete(normalized_type)
+                    _pending_results_cache.delete(normalized_type)
 
                     return {
                         'url': backend_url,
@@ -1065,14 +1168,13 @@ def fetch_generic_product_image(product_type: str) -> Optional[Dict[str, Any]]:
                 content_type = generated_image_data.get('content_type', 'image/png')
                 logger.info(f"[FETCH] ✓ FIX: Returning base64 image for '{product_type}' ({len(image_bytes)} bytes)")
                 
-                # Notify waiting requests
-                with _pending_lock:
-                    if normalized_type in _pending_requests:
-                        _pending_requests[normalized_type].set()
-                        del _pending_requests[normalized_type]
-                    if normalized_type in _pending_results:
-                        del _pending_results[normalized_type]
-                
+                # Notify waiting requests and cleanup (BoundedCache handles via delete)
+                pending_event = _pending_requests_cache.get(normalized_type)
+                if pending_event is not None:
+                    pending_event.set()
+                    _pending_requests_cache.delete(normalized_type)
+                _pending_results_cache.delete(normalized_type)
+
                 return {
                     'url': f"data:{content_type};base64,{base64_image}",
                     'product_type': product_type,
@@ -1083,15 +1185,16 @@ def fetch_generic_product_image(product_type: str) -> Optional[Dict[str, Any]]:
                 }
         else:
             logger.error(f"[FETCH] LLM image generation failed for '{product_type}'")
+            # FIX 4: Record failure
+            _failure_tracker.record_failure(product_type, "LLM generation returned None")
 
     finally:
-        # Clean up pending request tracking
-        with _pending_lock:
-            if normalized_type in _pending_requests:
-                _pending_requests[normalized_type].set()  # Signal completion (even on failure)
-                del _pending_requests[normalized_type]
-            if normalized_type in _pending_results:
-                del _pending_results[normalized_type]
+        # Clean up pending request tracking (BoundedCache handles via delete)
+        pending_event = _pending_requests_cache.get(normalized_type)
+        if pending_event is not None:
+            pending_event.set()  # Signal completion (even on failure)
+            _pending_requests_cache.delete(normalized_type)
+        _pending_results_cache.delete(normalized_type)
 
     # Complete failure - no image available
     logger.error(f"[FETCH] Failed to retrieve/generate image for '{product_type}'")
@@ -1153,6 +1256,7 @@ def fetch_generic_product_image_fast(product_type: str) -> Dict[str, Any]:
         cache_success = cache_generic_image_to_azure(product_type, generated_image_data)
         
         if cache_success:
+            _failure_tracker.mark_success(product_type)  # FIX 4
             azure_image = get_generic_image_from_azure(product_type)
             if azure_image:
                 logger.info(f"[FETCH_FAST] ✓ Generated and cached image for '{product_type}'")
@@ -1180,6 +1284,9 @@ def fetch_generic_product_image_fast(product_type: str) -> Dict[str, Any]:
                     'use_placeholder': False,
                     'reason': 'generated_base64'
                 }
+    else:
+        # FIX 4
+        _failure_tracker.record_failure(product_type, "Fast LLM generation returned None")
     
     # Step 4: LLM generation failed (likely rate-limited)
     logger.warning(f"[FETCH_FAST] ✗ Cannot generate image for '{product_type}' - use placeholder")
@@ -1198,8 +1305,19 @@ def fetch_generic_product_image_fast(product_type: str) -> Dict[str, Any]:
 # =============================================================================
 # Prevents abuse while allowing UI to retry failed image generation
 
-_regeneration_cooldowns: Dict[str, float] = {}  # Track last regeneration time per product type
-_regeneration_counts: Dict[str, int] = {}  # Track regeneration count per product type per hour
+# Using BoundedCache for rate limiting with automatic cleanup
+_regeneration_cooldowns: BoundedCache = get_or_create_cache(
+    name="image_regen_cooldowns",
+    max_size=200,
+    ttl_seconds=3600  # 1 hour
+)
+
+_regeneration_counts: BoundedCache = get_or_create_cache(
+    name="image_regen_counts",
+    max_size=200,
+    ttl_seconds=3600  # 1 hour - counts reset after 1 hour
+)
+
 _regeneration_lock = threading.Lock()
 _REGEN_COOLDOWN_SECONDS = 30  # Minimum 30 seconds between regeneration attempts
 _REGEN_MAX_PER_HOUR = 3  # Maximum 3 regeneration attempts per product type per hour
@@ -1208,48 +1326,44 @@ _REGEN_MAX_PER_HOUR = 3  # Maximum 3 regeneration attempts per product type per 
 def _check_regeneration_rate_limit(product_type: str) -> tuple:
     """
     Check if regeneration is allowed for this product type.
-    
+
     Returns:
         (allowed: bool, reason: str, wait_seconds: int)
     """
-    import time
-    
     normalized_type = product_type.strip().lower().replace(" ", "").replace("_", "").replace("-", "")
     current_time = time.time()
-    
+
     with _regeneration_lock:
-        # Check cooldown
-        last_regen_time = _regeneration_cooldowns.get(normalized_type, 0)
-        time_since_last = current_time - last_regen_time
-        
-        if time_since_last < _REGEN_COOLDOWN_SECONDS:
-            wait_time = int(_REGEN_COOLDOWN_SECONDS - time_since_last)
-            return (False, f"Please wait {wait_time} seconds before retrying", wait_time)
-        
-        # Check hourly limit
-        regen_count = _regeneration_counts.get(normalized_type, 0)
-        
-        # Reset count if more than an hour has passed
-        if time_since_last > 3600:
-            _regeneration_counts[normalized_type] = 0
+        # Check cooldown (BoundedCache handles TTL expiration automatically)
+        last_regen_time = _regeneration_cooldowns.get(normalized_type)
+
+        if last_regen_time is not None:
+            time_since_last = current_time - last_regen_time
+
+            if time_since_last < _REGEN_COOLDOWN_SECONDS:
+                wait_time = int(_REGEN_COOLDOWN_SECONDS - time_since_last)
+                return (False, f"Please wait {wait_time} seconds before retrying", wait_time)
+
+        # Check hourly limit (TTL handles the hourly reset automatically)
+        regen_count = _regeneration_counts.get(normalized_type)
+        if regen_count is None:
             regen_count = 0
-        
+
         if regen_count >= _REGEN_MAX_PER_HOUR:
             return (False, f"Maximum {_REGEN_MAX_PER_HOUR} regeneration attempts per hour reached", 0)
-        
+
         return (True, "allowed", 0)
 
 
 def _record_regeneration_attempt(product_type: str):
     """Record a regeneration attempt for rate limiting."""
-    import time
-    
     normalized_type = product_type.strip().lower().replace(" ", "").replace("_", "").replace("-", "")
     current_time = time.time()
-    
+
     with _regeneration_lock:
-        _regeneration_cooldowns[normalized_type] = current_time
-        _regeneration_counts[normalized_type] = _regeneration_counts.get(normalized_type, 0) + 1
+        _regeneration_cooldowns.set(normalized_type, current_time)
+        current_count = _regeneration_counts.get(normalized_type)
+        _regeneration_counts.set(normalized_type, (current_count or 0) + 1)
 
 
 def regenerate_generic_image(product_type: str) -> Dict[str, Any]:
@@ -1339,3 +1453,66 @@ def regenerate_generic_image(product_type: str) -> Dict[str, Any]:
         'reason': 'failed',
         'message': 'Image generation failed. The LLM may be rate limited or unavailable.'
     }
+
+
+# =============================================================================
+# BACKGROUND RETRY WORKER
+# =============================================================================
+
+def retry_generation_worker():
+    """
+    Background worker that retries failed image generations.
+    Runs periodically to process items in the failure tracker.
+    Respects strict retry limits (max 2 attempts total).
+    """
+    import time
+    logger.info("[RETRY_WORKER] Started background image generation retry worker")
+    
+    while True:
+        try:
+            # Check for pending retries
+            pending = _failure_tracker.get_pending_retries()
+            
+            if pending:
+                logger.info(f"[RETRY_WORKER] Processing {len(pending)} failed items...")
+                
+                for item in pending:
+                    product_type = item['product_type']
+                    retry_count = item.get('retry_count', 0)
+                    
+                    # Double check retry limit just in case (Tracker logic should handle this, but be safe)
+                    if retry_count >= 1: # 0 = initial, 1 = first retry. If count is 1, this IS the retry. If it fails, count becomes 2.
+                        # Do we retry here? Tracker marks 'permanently_failed' AFTER incrementing.
+                        # If status is pending_retry, it means count is < max_retries. 
+                        # Actually if count is 1, next increment makes it 2 and status 'permanently_failed'.
+                        pass
+                    
+                    logger.info(f"[RETRY_WORKER] Retrying generation for '{product_type}' (Attempt {retry_count + 2}/2)...")
+                    
+                    # Generate (this handles deduplication via fetch function locks if needed, 
+                    # but here we call _generate direct or fetch?)
+                    # Best to call fetch_generic_product_image to reuse all logic including caching
+                    # BUT fetch calls tracker.record_failure on error, which increments count. Perfect.
+                    
+                    result = fetch_generic_product_image(product_type)
+                    
+                    if result:
+                        logger.info(f"[RETRY_WORKER] ✓ Retry SUCCESS for '{product_type}'")
+                    else:
+                        logger.warning(f"[RETRY_WORKER] ✗ Retry FAILED for '{product_type}'")
+                        
+                    # Sleep to prevent rate limits between retries
+                    time.sleep(5) 
+            
+            # Wait before next check 
+            time.sleep(300) # Check every 5 minutes
+            
+        except Exception as e:
+            logger.error(f"[RETRY_WORKER] Worker crashed: {e}")
+            time.sleep(60) # Wait before restarting loop
+
+def start_retry_worker():
+    """Start the background retry thread."""
+    retry_thread = threading.Thread(target=retry_generation_worker, daemon=True, name="ImageRetryWorker")
+    retry_thread.start()
+    logger.info("[RETRY_WORKER] Background thread launched")

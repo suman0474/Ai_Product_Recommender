@@ -11,6 +11,7 @@ This module MUST be called FIRST before any other imports in main.py.
 
 import os
 import logging
+import atexit
 from dotenv import load_dotenv
 
 # Configure logging
@@ -19,6 +20,116 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+
+# =============================================================================
+# PHASE 2: APPLICATION-LEVEL CLEANUP HANDLERS
+# =============================================================================
+
+def _cleanup_bounded_caches():
+    """
+    Cleanup all bounded caches on application shutdown.
+    Prevents memory leaks and logs final statistics.
+    """
+    try:
+        from agentic.caching.bounded_cache_manager import (
+            cleanup_all_caches,
+            get_all_cache_stats,
+            get_registry_summary
+        )
+
+        logger.info("[CLEANUP] Cleaning up bounded caches...")
+
+        # Cleanup expired entries in all caches
+        cleanup_results = cleanup_all_caches()
+
+        # Get final statistics
+        stats = get_all_cache_stats()
+        summary = get_registry_summary()
+
+        logger.info(f"[CLEANUP] Cache cleanup results: {cleanup_results}")
+        logger.info(f"[CLEANUP] Registry summary: {summary}")
+
+        # Log per-cache stats
+        if stats:
+            logger.info("[CLEANUP] Final cache statistics:")
+            for cache_name, cache_stats in stats.items():
+                logger.info(f"[CLEANUP]   {cache_name}: {cache_stats}")
+
+        logger.info("[CLEANUP] ✓ Bounded caches cleanup complete")
+    except ImportError:
+        logger.debug("[CLEANUP] BoundedCache module not available (not initialized)")
+    except Exception as e:
+        logger.error(f"[CLEANUP] Error cleaning up bounded caches: {e}", exc_info=True)
+
+
+def _shutdown_global_executor():
+    """
+    Shutdown the global thread pool executor.
+    Ensures all pending tasks complete before shutdown.
+    """
+    try:
+        from agentic.global_executor_manager import shutdown_global_executor, get_executor_stats
+
+        logger.info("[CLEANUP] Shutting down global executor...")
+
+        # Get stats before shutdown
+        stats = get_executor_stats()
+        logger.info(f"[CLEANUP] Global executor stats: {stats}")
+
+        # Shutdown with wait=True to ensure all tasks complete
+        shutdown_global_executor(wait=True)
+
+        logger.info("[CLEANUP] ✓ Global executor shutdown complete")
+    except ImportError:
+        logger.debug("[CLEANUP] Global executor not available (not initialized)")
+    except Exception as e:
+        logger.error(f"[CLEANUP] Error shutting down global executor: {e}", exc_info=True)
+
+
+def _cleanup_image_retry_worker():
+    """
+    Stop the image generation retry worker thread.
+    """
+    try:
+        from agentic.tasks.cache_cleanup_task import stop_cache_cleanup
+        logger.info("[CLEANUP] Stopping background cleanup task...")
+        stop_cache_cleanup()
+        logger.info("[CLEANUP] ✓ Background cleanup task stopped")
+    except ImportError:
+        logger.debug("[CLEANUP] Cache cleanup task not available")
+    except Exception as e:
+        logger.error(f"[CLEANUP] Error stopping cleanup task: {e}", exc_info=True)
+
+
+def register_cleanup_handlers():
+    """
+    Register cleanup handlers for application shutdown.
+    These run in reverse order (LIFO) when the application exits.
+
+    Cleanup sequence:
+    1. Stop background cleanup task
+    2. Cleanup bounded caches
+    3. Shutdown global executor
+    4. Log final status
+    """
+    logger.info("[INIT] Step 4: Registering cleanup handlers...")
+
+    # Register handlers in reverse order of initialization
+    # They will execute in reverse order (LIFO)
+    atexit.register(_shutdown_global_executor)
+    atexit.register(_cleanup_bounded_caches)
+    atexit.register(_cleanup_image_retry_worker)
+
+    # Register final status logging
+    def _log_final_status():
+        logger.info("="*70)
+        logger.info("[CLEANUP] Application shutdown complete")
+        logger.info("="*70)
+
+    atexit.register(_log_final_status)
+
+    logger.info("[INIT] ✓ Cleanup handlers registered (LIFO order)")
 
 
 def initialize_application() -> bool:
@@ -58,6 +169,14 @@ def initialize_application() -> bool:
     except Exception as e:
         logger.error(f"[INIT] ✗ Singleton initialization failed: {e}")
         raise RuntimeError(f"Singleton initialization failed: {e}")
+
+    # Step 4: Register cleanup handlers (Phase 2)
+    try:
+        register_cleanup_handlers()
+        logger.info("[INIT] ✓ Cleanup handlers registered")
+    except Exception as e:
+        logger.error(f"[INIT] ✗ Cleanup handler registration failed: {e}")
+        raise RuntimeError(f"Cleanup handler registration failed: {e}")
 
     logger.info("="*70)
     logger.info("[INIT] Application initialization complete")
@@ -249,6 +368,16 @@ def initialize_singletons() -> None:
         logger.warning("[INIT]   ⚠ Cache modules not available")
     except Exception as e:
         logger.error(f"[INIT]   ✗ Cache initialization failed: {e}")
+
+    # Initialize Image Generation Retry Worker (FIX 4)
+    try:
+        from generic_image_utils import start_retry_worker
+        start_retry_worker()
+        logger.info("[INIT]   ✓ Image generation retry worker started")
+    except ImportError:
+        logger.warning("[INIT]   ⚠ generic_image_utils not available")
+    except Exception as e:
+        logger.error(f"[INIT]   ✗ Failed to start retry worker: {e}")
 
     # Log initialization summary
     logger.info("[INIT]   ✓ Singleton initialization complete")

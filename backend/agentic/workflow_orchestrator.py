@@ -1,7 +1,7 @@
 # agentic/workflow_orchestrator.py
 # LangGraph Workflow Orchestrator - Prompt Integration System
 #
-# This module provides the integration layer between tools_prompts.py
+# This module provides the integration layer between prompts.py
 # and LangGraph workflows. It creates a unified system for:
 # 1. Managing prompt-based agents
 # 2. Tool definitions for each prompt type
@@ -61,7 +61,7 @@ class PromptCategory(str, Enum):
 
 class PromptRegistry:
     """
-    Central registry for all prompts from tools_prompts.py
+    Central registry for all prompts from prompts.py
     
     Provides:
     - Organized access to prompts by category
@@ -75,7 +75,7 @@ class PromptRegistry:
         self._initialize_prompts()
     
     def _initialize_prompts(self):
-        """Load all prompts from tools_prompts.py"""
+        """Load all prompts from prompts.py"""
         
         # Validation prompts
         self.register("validation", prompts.validation_prompt, {

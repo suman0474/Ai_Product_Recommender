@@ -292,6 +292,7 @@ const Project = () => {
     // State to track failed image fetches for regeneration
     const [failedImages, setFailedImages] = useState<Set<string>>(new Set());
     const [regeneratingImages, setRegeneratingImages] = useState<Set<string>>(new Set());
+    const [loadingImages, setLoadingImages] = useState<Set<string>>(new Set());
 
     // Regenerate a single image - called when user clicks retry button
     const regenerateImage = async (productName: string) => {
@@ -470,12 +471,22 @@ const Project = () => {
             .join('_');                 // Join with underscores
     };
 
-    // SEQUENTIAL image loading - prevents rate limit issues with LLM generation
     // Cached images load instantly (no delay), only uncached ones are slow
     const fetchGenericImagesLazy = async (productTypes: string[]) => {
         const uniqueTypes = [...new Set(productTypes)]; // Remove duplicates
 
         console.log(`[SEQUENTIAL_LOAD] Starting sequential load for ${uniqueTypes.length} images...`);
+
+        // Mark all images as loading initially
+        setLoadingImages(prev => {
+            const next = new Set(prev);
+            uniqueTypes.forEach(pt => {
+                if (!genericImages[pt] && !failedImages.has(pt)) {
+                    next.add(pt);
+                }
+            });
+            return next;
+        });
 
         // Load images one by one - cached ones are instant, uncached trigger LLM
         for (let i = 0; i < uniqueTypes.length; i++) {
@@ -484,6 +495,11 @@ const Project = () => {
             // Skip if already loaded
             if (genericImages[productType]) {
                 console.log(`[SEQUENTIAL_LOAD] [${i + 1}/${uniqueTypes.length}] Already loaded: ${productType}`);
+                setLoadingImages(prev => {
+                    const next = new Set(prev);
+                    next.delete(productType);
+                    return next;
+                });
                 continue;
             }
 
@@ -505,17 +521,43 @@ const Project = () => {
                                 ...prev,
                                 [productType]: absoluteUrl
                             }));
+                            // Remove from failed set if previously failed
+                            setFailedImages(prev => {
+                                const next = new Set(prev);
+                                next.delete(productType);
+                                return next;
+                            });
                             console.log(`[SEQUENTIAL_LOAD] ✓ Loaded ${i + 1}/${uniqueTypes.length}: ${productType}`);
+                        } else {
+                            // No URL returned - mark as failed
+                            setFailedImages(prev => new Set(prev).add(productType));
+                            console.warn(`[SEQUENTIAL_LOAD] ✗ No URL for ${productType}`);
                         }
+                    } else {
+                        // Backend returned success=false or no image - mark as failed
+                        setFailedImages(prev => new Set(prev).add(productType));
+                        console.warn(`[SEQUENTIAL_LOAD] ✗ No image data for ${productType}`);
                     }
                 } else if (response.status === 404) {
-                    // Image not found - likely LLM generation failed due to rate limit
+                    // Image not found - mark as failed so user can retry
+                    setFailedImages(prev => new Set(prev).add(productType));
                     console.warn(`[SEQUENTIAL_LOAD] ✗ Not found: ${productType} (may need LLM generation later)`);
                 } else {
+                    // Other HTTP errors - mark as failed
+                    setFailedImages(prev => new Set(prev).add(productType));
                     console.warn(`[SEQUENTIAL_LOAD] ✗ Failed (${response.status}): ${productType}`);
                 }
             } catch (error) {
+                // Network/parsing errors - mark as failed
+                setFailedImages(prev => new Set(prev).add(productType));
                 console.error(`[SEQUENTIAL_LOAD] ✗ Error fetching ${productType}:`, error);
+            } finally {
+                // Always remove from loading set when done
+                setLoadingImages(prev => {
+                    const next = new Set(prev);
+                    next.delete(productType);
+                    return next;
+                });
             }
         }
 
@@ -2462,6 +2504,11 @@ const Project = () => {
                                                                             }}
                                                                         />
                                                                     </div>
+                                                                ) : loadingImages.has(instrument.productName) ? (
+                                                                    <div className="flex flex-col items-center justify-center my-4 py-6 rounded-lg bg-muted/20">
+                                                                        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground mb-2" />
+                                                                        <p className="text-xs text-muted-foreground">Loading image...</p>
+                                                                    </div>
                                                                 ) : failedImages.has(instrument.productName) && (
                                                                     <div className="flex flex-col items-center justify-center my-4 py-6 rounded-lg bg-muted/30 border border-dashed border-muted-foreground/30">
                                                                         <p className="text-sm text-muted-foreground mb-2">Image not available</p>
@@ -2493,6 +2540,9 @@ const Project = () => {
                                                                         <h4 className="font-medium text-sm text-muted-foreground">
                                                                             Specifications:
                                                                         </h4>
+                                                                        <p className="text-xs text-muted-foreground/80">
+                                                                            {Object.keys(instrument.specifications).length} specs (min 30, max 100 per item)
+                                                                        </p>
                                                                         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                                                                             {Object.entries(instrument.specifications).map(([key, value]) => {
                                                                                 const prettyKey = prettifyKey(key);
@@ -2612,6 +2662,11 @@ const Project = () => {
                                                                             }}
                                                                         />
                                                                     </div>
+                                                                ) : loadingImages.has(accessory.accessoryName) ? (
+                                                                    <div className="flex flex-col items-center justify-center my-4 py-6 rounded-lg bg-muted/20">
+                                                                        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground mb-2" />
+                                                                        <p className="text-xs text-muted-foreground">Loading image...</p>
+                                                                    </div>
                                                                 ) : failedImages.has(accessory.accessoryName) && (
                                                                     <div className="flex flex-col items-center justify-center my-4 py-6 rounded-lg bg-muted/30 border border-dashed border-muted-foreground/30">
                                                                         <p className="text-sm text-muted-foreground mb-2">Image not available</p>
@@ -2643,6 +2698,9 @@ const Project = () => {
                                                                         <h4 className="font-medium text-sm text-muted-foreground">
                                                                             Specifications:
                                                                         </h4>
+                                                                        <p className="text-xs text-muted-foreground/80">
+                                                                            {Object.keys(accessory.specifications).length} specs (min 30, max 100 per item)
+                                                                        </p>
                                                                         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                                                                             {Object.entries(accessory.specifications).map(([key, value]) => {
                                                                                 const prettyKey = prettifyKey(key);

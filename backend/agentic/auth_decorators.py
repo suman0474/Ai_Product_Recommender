@@ -12,7 +12,7 @@
 #   - agentic/product_info_api.py
 #   - agentic/engenie_chat/engenie_chat_api.py
 #   - agentic/strategy_rag/strategy_admin_api.py
-#   - tools_api.py
+#   - tools/api.py
 #
 # Usage:
 #   from agentic.auth_decorators import login_required

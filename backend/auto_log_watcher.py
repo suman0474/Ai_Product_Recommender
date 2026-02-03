@@ -1,375 +1,220 @@
-#!/usr/bin/env python3
 """
-Auto Log Watcher - Automatic Terminal Data Storage
-===================================================
+Auto Log Watcher - Runs as a BACKGROUND PROCESS
+================================================
+Automatically captures terminal/log data and stores it in TL1.md - TL5.md+
 
-Automatically captures and stores terminal output data into TL*.md files.
-Features:
-- Stores each word/line of terminal data
-- Auto-rotates to new files when 5000 line limit reached
-- Supports concurrent/real-time capture
-- Creates TL6.md, TL7.md, etc. automatically as needed
+HOW TO USE:
+-----------
+1. Start this watcher in background:
+   START /B python auto_log_watcher.py
 
-Usage Examples:
-    # Wrap and capture a command's output:
-    python auto_log_watcher.py --wrap "python main.py"
-    
-    # Watch an existing log file:
-    python auto_log_watcher.py --watch logfile.log
-    
-    # Capture from stdin:
-    python main.py 2>&1 | python auto_log_watcher.py --stdin
+2. Start your main app with output redirection:
+   python main.py 2>&1 >> app_output.log
+
+The watcher will automatically capture all output and store it in TL files.
+
+ALTERNATIVE - All in one command:
+   python auto_log_watcher.py --wrap "python main.py"
 """
 
 import os
 import sys
 import time
 import subprocess
-import argparse
-import signal
+import threading
 from pathlib import Path
 from datetime import datetime
-from typing import Optional, List, TextIO
-import threading
+from typing import Optional
+import signal
 
-
-class TerminalLogStorage:
-    """Manages storage of terminal data across multiple TL*.md files."""
+class AutoLogWatcher:
+    """Automatically watches and stores log data."""
     
     MAX_LINES_PER_FILE = 5000
     FILE_PREFIX = "TL"
     FILE_EXTENSION = ".md"
+    LOG_FILE = "app_output.log"
     
-    def __init__(self, base_dir: Optional[str] = None):
-        """Initialize the log storage manager."""
-        # Determine base directory for TL files
-        script_dir = Path(__file__).parent.resolve()
-        
-        if base_dir:
-            self.base_dir = Path(base_dir).resolve()
-        elif script_dir.name == 'backend':
-            # Store in parent directory (project root)
-            self.base_dir = script_dir.parent
+    def __init__(self):
+        # Go to parent directory for TL files
+        self.script_dir = Path(__file__).parent.resolve()
+        if self.script_dir.name == 'backend':
+            self.base_dir = self.script_dir.parent
         else:
-            self.base_dir = script_dir
+            self.base_dir = self.script_dir
         
-        self.current_file_num = 1
-        self.current_line_count = 0
-        self._lock = threading.Lock()
+        self.log_file_path = self.script_dir / self.LOG_FILE
+        self.current_file_index = 1
+        self.running = True
+        self.last_position = 0
         
-        # Initialize the file system
-        self._initialize_storage()
+        # Initialize TL files
+        self._find_active_file()
         
-        print(f"📁 Log storage directory: {self.base_dir}")
-        print(f"📝 Current active file: {self.get_current_file_path().name}")
-        print("=" * 60)
+        print(f"📁 Log storage: {self.base_dir}")
+        print(f"📄 Watching: {self.log_file_path}")
+        print(f"📝 Writing to: TL{self.current_file_index}.md")
+        print("=" * 50)
     
-    def _initialize_storage(self):
-        """Find or create the appropriate TL file to start with."""
-        # Scan existing TL files to find where to continue
-        while True:
-            file_path = self.get_current_file_path()
-            
-            if not file_path.exists():
-                self._create_new_file(file_path, self.current_file_num)
-                break
-            
-            # Check if current file is full
-            line_count = self._count_lines(file_path)
-            
-            if line_count >= self.MAX_LINES_PER_FILE:
-                # File is full, move to next
-                self.current_file_num += 1
-            else:
-                # File has space, use it
-                self.current_line_count = line_count
-                break
+    def _get_file_path(self, index: int) -> Path:
+        return self.base_dir / f"{self.FILE_PREFIX}{index}{self.FILE_EXTENSION}"
     
-    def get_current_file_path(self) -> Path:
-        """Get the path of the current active TL file."""
-        return self.base_dir / f"{self.FILE_PREFIX}{self.current_file_num}{self.FILE_EXTENSION}"
-    
-    def _create_new_file(self, file_path: Path, file_num: int):
-        """Create a new TL markdown file with header."""
+    def _create_file(self, file_path: Path, file_num: int):
         header = f"""# Terminal Log {file_num}
 
-> Auto-generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-> Maximum lines: {self.MAX_LINES_PER_FILE}
-> Auto-managed by: auto_log_watcher.py
+> Auto-generated on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+> Max lines: {self.MAX_LINES_PER_FILE}
 
 ---
 
 """
-        try:
-            file_path.write_text(header, encoding='utf-8')
-            self.current_line_count = header.count('\n')
-            print(f"✨ Created new file: {file_path.name}")
-        except Exception as e:
-            print(f"❌ Error creating file {file_path}: {e}", file=sys.stderr)
-            raise
+        file_path.write_text(header, encoding='utf-8')
+        print(f"✨ Created: {file_path.name}")
     
-    def _count_lines(self, file_path: Path) -> int:
-        """Count the number of lines in a file."""
+    def _get_line_count(self, file_path: Path) -> int:
         try:
             with open(file_path, 'r', encoding='utf-8', errors='replace') as f:
                 return sum(1 for _ in f)
-        except Exception:
+        except:
             return 0
     
-    def store_line(self, line: str):
-        """Store a single line of data, handling file rotation if needed."""
-        with self._lock:
-            # Check if we need to rotate to a new file
-            if self.current_line_count >= self.MAX_LINES_PER_FILE:
-                self.current_file_num += 1
-                new_file_path = self.get_current_file_path()
-                self._create_new_file(new_file_path, self.current_file_num)
-            
-            # Append the line to current file
-            try:
-                file_path = self.get_current_file_path()
-                with open(file_path, 'a', encoding='utf-8') as f:
-                    f.write(line)
-                    if not line.endswith('\n'):
-                        f.write('\n')
-                
-                self.current_line_count += 1
-            except Exception as e:
-                print(f"❌ Error writing to file: {e}", file=sys.stderr)
+    def _find_active_file(self):
+        """Find or create the active file with space."""
+        while True:
+            file_path = self._get_file_path(self.current_file_index)
+            if not file_path.exists():
+                self._create_file(file_path, self.current_file_index)
+                return
+            if self._get_line_count(file_path) >= self.MAX_LINES_PER_FILE:
+                self.current_file_index += 1
+                continue
+            return
     
-    def store_lines(self, lines: List[str]):
-        """Store multiple lines of data efficiently."""
-        for line in lines:
-            self.store_line(line.rstrip('\n'))
-    
-    def add_section_header(self, title: str):
-        """Add a timestamped section header."""
-        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        header = f"\n## [{timestamp}] {title}\n"
-        self.store_line(header)
-
-
-class AutoLogWatcher:
-    """Main watcher class that handles different capture modes."""
-    
-    def __init__(self, storage: TerminalLogStorage):
-        self.storage = storage
-        self.running = True
-        
-        # Handle graceful shutdown
-        signal.signal(signal.SIGINT, self._signal_handler)
-        signal.signal(signal.SIGTERM, self._signal_handler)
-    
-    def _signal_handler(self, signum, frame):
-        """Handle shutdown signals gracefully."""
-        print("\n🛑 Shutdown signal received. Stopping...")
-        self.running = False
-    
-    def wrap_command(self, command: str):
-        """
-        Run a command and capture its output in real-time.
-        Output is both displayed to console and stored in TL files.
-        """
-        print(f"🚀 Running command: {command}")
-        print(f"📝 Output will be captured to TL files")
-        print("-" * 60)
-        
-        self.storage.add_section_header(f"Command: {command}")
-        
-        try:
-            process = subprocess.Popen(
-                command,
-                shell=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                bufsize=1,  # Line buffered
-                encoding='utf-8',
-                errors='replace'
-            )
-            
-            # Read and store output line by line
-            while self.running:
-                line = process.stdout.readline()
-                
-                if not line:
-                    if process.poll() is not None:
-                        break
-                    continue
-                
-                # Display to console
-                print(line, end='')
-                sys.stdout.flush()
-                
-                # Store to file
-                self.storage.store_line(line.rstrip('\n'))
-            
-            # Wait for process to complete
-            return_code = process.wait()
-            
-            print("-" * 60)
-            print(f"✅ Command finished with return code: {return_code}")
-            self.storage.add_section_header(f"Command completed (exit code: {return_code})")
-            
-        except Exception as e:
-            print(f"❌ Error running command: {e}", file=sys.stderr)
-            self.storage.store_line(f"ERROR: {e}")
-    
-    def watch_file(self, file_path: str, interval: float = 1.0):
-        """
-        Watch a file for new content and store it.
-        Similar to 'tail -f' functionality.
-        """
-        target_file = Path(file_path)
-        
-        if not target_file.exists():
-            print(f"❌ File not found: {file_path}")
+    def _append_lines(self, lines: list):
+        """Append lines to current TL file, rolling over if needed."""
+        if not lines:
             return
         
-        print(f"👀 Watching file: {target_file}")
-        print(f"📝 New content will be stored to TL files")
-        print(f"⏱️  Check interval: {interval}s")
-        print("Press Ctrl+C to stop...")
-        print("-" * 60)
+        for line in lines:
+            file_path = self._get_file_path(self.current_file_index)
+            
+            # Check if need to roll over
+            if self._get_line_count(file_path) >= self.MAX_LINES_PER_FILE:
+                self.current_file_index += 1
+                file_path = self._get_file_path(self.current_file_index)
+                self._create_file(file_path, self.current_file_index)
+                print(f"📄 Rolled over to: {file_path.name}")
+            
+            # Append line
+            with open(file_path, 'a', encoding='utf-8') as f:
+                f.write(line + '\n')
+    
+    def watch_log_file(self, interval: float = 1.0):
+        """Watch the log file and store new content continuously."""
+        print(f"👀 Watching for new content every {interval}s... (Ctrl+C to stop)")
         
-        self.storage.add_section_header(f"Watching file: {target_file}")
+        # Create log file if it doesn't exist
+        if not self.log_file_path.exists():
+            self.log_file_path.write_text("", encoding='utf-8')
+            print(f"📄 Created empty log file: {self.log_file_path.name}")
         
-        # Track file position
-        last_position = target_file.stat().st_size
-        
-        try:
-            while self.running:
-                current_size = target_file.stat().st_size
-                
-                if current_size > last_position:
-                    # File has new content
-                    with open(target_file, 'r', encoding='utf-8', errors='replace') as f:
-                        f.seek(last_position)
-                        new_lines = f.readlines()
-                        
-                        for line in new_lines:
-                            print(line, end='')
-                            self.storage.store_line(line.rstrip('\n'))
-                        
-                        last_position = f.tell()
-                
-                elif current_size < last_position:
-                    # File was truncated, start from beginning
-                    print("⚠️  File was truncated, restarting from beginning...")
-                    last_position = 0
+        while self.running:
+            try:
+                with open(self.log_file_path, 'r', encoding='utf-8', errors='replace') as f:
+                    f.seek(self.last_position)
+                    new_content = f.read()
+                    self.last_position = f.tell()
+                    
+                    if new_content.strip():
+                        lines = new_content.strip().split('\n')
+                        self._append_lines(lines)
+                        print(f"📝 Stored {len(lines)} lines → TL{self.current_file_index}.md")
                 
                 time.sleep(interval)
-                
-        except KeyboardInterrupt:
-            pass
-        except Exception as e:
-            print(f"❌ Error watching file: {e}", file=sys.stderr)
+            except KeyboardInterrupt:
+                break
+            except Exception as e:
+                print(f"⚠️ Error: {e}")
+                time.sleep(interval)
         
-        print("\n✅ Stopped watching file")
+        print("\n👋 Watcher stopped.")
     
-    def capture_stdin(self):
-        """Capture data from stdin and store it."""
-        print("� Reading from stdin...")
-        print("📝 Data will be stored to TL files")
-        print("-" * 60)
+    def wrap_and_run(self, command: str):
+        """Run a command and capture ALL its output to TL files automatically."""
+        print(f"🚀 Running: {command}")
+        print("📝 All output will be stored automatically...")
+        print("=" * 50)
         
-        self.storage.add_section_header("Stdin capture")
+        # Add timestamp header
+        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        self._append_lines([f"\n## [{timestamp}] - Command: {command}\n"])
+        
+        process = subprocess.Popen(
+            command,
+            shell=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+            encoding='utf-8',
+            errors='replace',
+            env={**os.environ, 'PYTHONUNBUFFERED': '1'}
+        )
         
         try:
-            for line in sys.stdin:
-                print(line, end='')
-                self.storage.store_line(line.rstrip('\n'))
+            while True:
+                line = process.stdout.readline()
+                if not line and process.poll() is not None:
+                    break
+                if line:
+                    line = line.rstrip()
+                    print(line)  # Show in terminal
+                    self._append_lines([line])  # Store in TL file
         except KeyboardInterrupt:
-            pass
-        except Exception as e:
-            print(f"❌ Error reading stdin: {e}", file=sys.stderr)
+            print("\n🛑 Stopping...")
+            process.terminate()
         
-        print("\n✅ Stdin capture completed")
-
+        print("\n✅ Process finished. All output stored.")
 
 def main():
-    """Main entry point."""
-    parser = argparse.ArgumentParser(
-        description="Auto Log Watcher - Automatic terminal data storage",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Examples:
-  # Capture command output:
-  python auto_log_watcher.py --wrap "python main.py"
-  
-  # Watch a log file:
-  python auto_log_watcher.py --watch app.log
-  
-  # Pipe from another command:
-  python main.py 2>&1 | python auto_log_watcher.py --stdin
-  
-  # Custom storage directory:
-  python auto_log_watcher.py --wrap "python main.py" --dir /path/to/logs
-        """
-    )
-    
-    parser.add_argument(
-        '--wrap', '-w',
-        type=str,
-        help='Command to run and capture output from'
-    )
-    
-    parser.add_argument(
-        '--watch', '-f',
-        type=str,
-        help='File to watch for new content (like tail -f)'
-    )
-    
-    parser.add_argument(
-        '--stdin',
-        action='store_true',
-        help='Capture data from stdin'
-    )
-    
-    parser.add_argument(
-        '--dir', '-d',
-        type=str,
-        help='Directory to store TL files (default: auto-detect)'
-    )
-    
-    parser.add_argument(
-        '--interval', '-i',
-        type=float,
-        default=1.0,
-        help='Watch interval in seconds (default: 1.0)'
-    )
+    import argparse
+    parser = argparse.ArgumentParser(description="Auto Log Watcher")
+    parser.add_argument('--wrap', '-w', type=str, help='Wrap and run a command, capturing all output')
+    parser.add_argument('--watch', action='store_true', help='Watch app_output.log for new content')
+    parser.add_argument('--interval', '-i', type=float, default=1.0, help='Watch interval in seconds')
     
     args = parser.parse_args()
+    watcher = AutoLogWatcher()
     
-    # Initialize storage
-    try:
-        storage = TerminalLogStorage(base_dir=args.dir)
-    except Exception as e:
-        print(f"❌ Failed to initialize storage: {e}", file=sys.stderr)
-        return 1
-    
-    # Initialize watcher
-    watcher = AutoLogWatcher(storage)
-    
-    # Execute the appropriate mode
-    try:
-        if args.wrap:
-            watcher.wrap_command(args.wrap)
-        elif args.watch:
-            watcher.watch_file(args.watch, args.interval)
-        elif args.stdin:
-            watcher.capture_stdin()
-        else:
-            # No mode specified, show help
-            parser.print_help()
-            print("\n💡 Tip: Use --wrap to capture command output automatically")
-            return 0
-    except Exception as e:
-        print(f"❌ Unexpected error: {e}", file=sys.stderr)
-        return 1
-    
-    return 0
-
+    if args.wrap:
+        watcher.wrap_and_run(args.wrap)
+    elif args.watch:
+        watcher.watch_log_file(args.interval)
+    else:
+        # Default: wrap mode instruction
+        print("""
+╔══════════════════════════════════════════════════════════════╗
+║           AUTO LOG WATCHER - Usage Instructions              ║
+╠══════════════════════════════════════════════════════════════╣
+║                                                              ║
+║  OPTION 1: Wrap your command (RECOMMENDED)                   ║
+║  ─────────────────────────────────────────                   ║
+║  python auto_log_watcher.py --wrap "python main.py"          ║
+║                                                              ║
+║  This runs your app AND stores all output automatically.     ║
+║                                                              ║
+║  OPTION 2: Watch a log file                                  ║
+║  ────────────────────────────                                ║
+║  Terminal 1: python main.py >> app_output.log 2>&1           ║
+║  Terminal 2: python auto_log_watcher.py --watch              ║
+║                                                              ║
+║  OPTION 3: Background watching                               ║
+║  ────────────────────────────                                ║
+║  START /B python auto_log_watcher.py --watch                 ║
+║  python main.py >> app_output.log 2>&1                       ║
+║                                                              ║
+╚══════════════════════════════════════════════════════════════╝
+""")
 
 if __name__ == "__main__":
-    sys.exit(main())
+    main()

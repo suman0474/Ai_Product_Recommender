@@ -50,6 +50,7 @@ from .potential_product_index import run_potential_product_index_workflow
 # Import internal API client for workflow orchestration
 from .internal_api import api_client
 from .models import create_initial_state, IntentType, WorkflowType
+from tools.instrument_tools import modify_instruments_tool
 
 logger = logging.getLogger(__name__)
 
@@ -163,7 +164,7 @@ def classify_route():
       and determine which workflow to route to:
       - solution: Complex systems requiring multiple instruments
       - instrument_identifier: Single product requirements
-      - product_info: Questions about products/standards
+      - engenie_chat: Questions about products/standards (EnGenie Chat)
       - out_of_domain: Unrelated queries (rejected with helpful message)
     parameters:
       - in: body
@@ -194,7 +195,7 @@ def classify_route():
               properties:
                 target_workflow:
                   type: string
-                  enum: [solution, instrument_identifier, product_info, out_of_domain]
+                  enum: [solution, instrument_identifier, engenie_chat, out_of_domain]
                 intent:
                   type: string
                   description: Raw intent from classify_intent_tool
@@ -241,10 +242,10 @@ def product_info_decision():
     ---
     tags:
       - LangChain Agents
-    summary: Determine if query should route to Product Info page
+    summary: Determine if query should route to EnGenie Chat
     description: |
       Uses ProductInfoIntentAgent to make detailed routing decisions for
-      the Product Info page in the frontend.
+      the EnGenie Chat in the frontend.
     parameters:
       - in: body
         name: body
@@ -282,7 +283,7 @@ def product_info_decision():
                 reasoning:
                   type: string
     """
-    from .engenie_chat.engenie_chat_intent_agent import get_product_info_route_decision
+    from .engenie_chat.engenie_chat_intent_agent import get_engenie_chat_route_decision
     
     data = request.get_json()
     query = data.get('query', '').strip()
@@ -292,7 +293,7 @@ def product_info_decision():
     
     logger.info(f"[ENGENIE_CHAT_DECISION] Analyzing query: {query[:100]}...")
     
-    result = get_product_info_route_decision(query)
+    result = get_engenie_chat_route_decision(query)
     
     return api_response(True, data=result)
 
@@ -724,6 +725,52 @@ def identify_instruments():
     )
 
     return api_response(True, data=result, tags=tags)
+
+
+@agentic_bp.route('/modify-instruments', methods=['POST'])
+@login_required
+@handle_errors
+def modify_instruments():
+    """
+    Modify instruments list based on user request.
+    
+    Request Body:
+    {
+        "modification_request": "add a thermowell",
+        "current_instruments": [...],
+        "current_accessories": [...],
+        "session_id": "..."
+    }
+    """
+    data = request.get_json()
+    
+    if not data or 'modification_request' not in data:
+        return api_response(False, error="Modification request is required", status_code=400)
+        
+    modification_request = data['modification_request']
+    current_instruments = data.get('current_instruments', [])
+    current_accessories = data.get('current_accessories', [])
+    session_id = data.get('session_id') or get_session_id()
+    
+    # Call the tool function directly
+    # Note: modify_instruments_tool is a StructuredTool, so use .func or invoke
+    try:
+        # Using .func to bypass LangChain tool wrapper overhead if we just want the python logic
+        result = modify_instruments_tool.func(
+            modification_request=modification_request,
+            current_instruments=current_instruments,
+            current_accessories=current_accessories,
+            search_session_id=session_id
+        )
+        
+        if not result.get('success', True):
+            return api_response(False, error=result.get('error', 'Modification failed'), status_code=500)
+            
+        return api_response(True, data=result)
+        
+    except Exception as e:
+        logger.error(f"Modify instruments endpoint failed: {e}")
+        return api_response(False, error=str(e), status_code=500)
 
 
 @agentic_bp.route('/analyze', methods=['POST'])

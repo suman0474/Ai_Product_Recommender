@@ -37,41 +37,20 @@ logger = logging.getLogger(__name__)
 # PROMPTS
 # ============================================================================
 
-INSTRUMENT_LIST_PROMPT = """
-You are Engenie's Instrument Presenter. Format the identified instruments and accessories for user selection.
+# Import prompt loader directly from library
+# Use absolute import assuming backend is in path
+try:
+    from prompts_library.prompt_loader import load_prompt
+except ImportError:
+    # Fallback to ensure we catch path issues
+    import sys
+    backend_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    if backend_root not in sys.path:
+        sys.path.append(backend_root)
+    from prompts_library.prompt_loader import load_prompt
 
-Identified Instruments:
-{instruments}
-
-Identified Accessories:
-{accessories}
-
-Project Name: {project_name}
-
-Create a numbered list for user selection. Each item should have:
-- number: Sequential number (1, 2, 3, ...)
-- type: "instrument" or "accessory"
-- name: Product name
-- category: Product category
-- quantity: How many needed
-- key_specs: Brief specification summary (1 line)
-
-Return ONLY valid JSON:
-{{
-    "formatted_list": [
-        {{
-            "number": 1,
-            "type": "instrument" | "accessory",
-            "name": "<product name>",
-            "category": "<category>",
-            "quantity": <quantity>,
-            "key_specs": "<brief specs>"
-        }}
-    ],
-    "total_items": <count>,
-    "message": "Please select an item number to search for products."
-}}
-"""
+def get_instrument_list_prompt() -> str:
+    return load_prompt("instrument_list_prompt")
 
 
 # ============================================================================
@@ -230,6 +209,10 @@ def identify_instruments_and_accessories_node(state: InstrumentIdentifierState) 
 
     # Add instruments
     for instrument in state["identified_instruments"]:
+        # Ensure sample_input meets length requirements (60-75 words)
+        raw_sample = instrument.get("sample_input", "")
+        final_sample = _ensure_min_word_count(raw_sample, instrument, state.get("project_name", "Project"))
+        
         all_items.append({
             "number": item_number,
             "type": "instrument",
@@ -237,16 +220,23 @@ def identify_instruments_and_accessories_node(state: InstrumentIdentifierState) 
             "category": instrument.get("category", "Instrument"),
             "quantity": instrument.get("quantity", 1),
             "specifications": instrument.get("specifications", {}),
-            "sample_input": instrument.get("sample_input", ""),  # KEY FIELD
+            "sample_input": final_sample,
             "strategy": instrument.get("strategy", "")
         })
         item_number += 1
 
     # Add accessories
     for accessory in state["identified_accessories"]:
-        # Construct sample_input for accessories
-        acc_sample_input = f"{accessory.get('category', 'Accessory')} for {accessory.get('related_instrument', 'instruments')}"
+        # Get sample_input from LLM or construct basic one
+        llm_sample_input = accessory.get("sample_input", "")
+        basic_sample_input = f"{accessory.get('category', 'Accessory')} for {accessory.get('related_instrument', 'instruments')}"
         
+        # Use LLM one if decent length, otherwise start with basic (or LLM one if exists)
+        base_input = llm_sample_input if len(llm_sample_input) > 20 else basic_sample_input
+        
+        # Ensure sample_input meets length requirements (60-75 words)
+        final_sample = _ensure_min_word_count(base_input, accessory, state.get("project_name", "Project"))
+
         # Smart category extraction: If category is generic "Accessories" or "Accessory",
         # extract the product type from accessory_name (e.g., "Thermowell for X" -> "Thermowell")
         raw_category = accessory.get("category", "Accessory")
@@ -268,7 +258,7 @@ def identify_instruments_and_accessories_node(state: InstrumentIdentifierState) 
             "name": accessory_name,
             "category": smart_category,  # Use smart category instead of raw
             "quantity": accessory.get("quantity", 1),
-            "sample_input": acc_sample_input,
+            "sample_input": final_sample,
             "related_instrument": accessory.get("related_instrument", "")
         })
         item_number += 1
@@ -288,6 +278,67 @@ def identify_instruments_and_accessories_node(state: InstrumentIdentifierState) 
     logger.info(f"[IDENTIFIER] Found {total_items} items total")
 
     return state
+
+
+
+def _ensure_min_word_count(text: str, item: dict, project_name: str, min_words: int = 60, max_words: int = 75) -> str:
+    """
+    Ensure the text has at least min_words (target between min_words and max_words).
+    If not, augment it with detailed specifications and context to reach the length.
+    """
+    if not text:
+        text = ""
+        
+    words = text.split()
+    if len(words) >= min_words:
+        return text
+    
+    # Need to augment
+    name = item.get("name") or item.get("accessory_name") or item.get("product_name") or "Component"
+    category = item.get("category", "Industrial Item")
+    
+    # Start with what we have
+    augmented_parts = [text] if text else []
+    
+    # Add intro if missing
+    if name not in text:
+        augmented_parts.append(f"Technical specifications for {name} ({category}) required for {project_name}.")
+        
+    # Add detailed specs
+    specs = item.get("specifications", {})
+    if specs:
+        spec_desc = []
+        for k, v in specs.items():
+            val = str(v)
+            if isinstance(v, dict):
+                val = v.get("value", str(v))
+            if val and str(val).lower() not in ["null", "none", "n/a"]:
+                # Clean up key name
+                clean_k = k.replace("_", " ").title()
+                spec_desc.append(f"the {clean_k} must be {val}")
+        
+        if spec_desc:
+            augmented_parts.append("Key technical requirements include: " + "; ".join(spec_desc) + ".")
+            
+    # Add filler/context if still short
+    current_text = " ".join(augmented_parts)
+    current_words = len(current_text.split())
+    
+    if current_words < min_words:
+        # Add generic industrial context sentence by sentence to reach min_words without overshooting too much
+        filler_sentences = [
+            f"This {category} is a critical component for the {project_name} system and must ensure high reliability, durability, and compliance with relevant industrial standards.",
+            "It should be suitable for the specified process conditions and integrate seamlessly with existing instrumentation and control infrastructure.",
+            "Selection should prioritize models with proven field performance and availability of support."
+        ]
+        
+        for sentence in filler_sentences:
+            if current_words >= min_words:
+                break
+            augmented_parts.append(sentence)
+            current_words += len(sentence.split())
+        
+    return " ".join(augmented_parts)
 
 
 def _extract_spec_value(spec_value) -> str:
@@ -416,14 +467,19 @@ def _merge_deep_agent_specs_for_display(items: list) -> list:
             for key, val in flattened.items():
                 if not val: continue
                 
-                # Check source in original dict if possible, or flattened might have lost it
-                # We need to look up the key in combined_specs to find source
+                # Check source in original dict/object so we can show [STANDARDS] or [INFERRED]
                 source_label = ""
-                if key in combined_specs and isinstance(combined_specs[key], dict):
-                    src = combined_specs[key].get("source", "")
+                raw = combined_specs.get(key)
+                if raw is not None:
+                    src = None
+                    if isinstance(raw, dict):
+                        src = raw.get("source", "")
+                    else:
+                        src = getattr(raw, "source", None) or ""
                     if src == "standards":
                         source_label = " [STANDARDS]"
-                    elif src == "llm_generated":
+                    elif src in ("llm_generated", "database"):
+                        # "database" = non-standards from batch (user/LLM); show as [INFERRED]
                         source_label = " [INFERRED]"
                 
                 # Helper to check validity
@@ -523,7 +579,7 @@ def format_selection_list_node(state: InstrumentIdentifierState) -> InstrumentId
         )
 
 
-        prompt = ChatPromptTemplate.from_template(INSTRUMENT_LIST_PROMPT)
+        prompt = ChatPromptTemplate.from_template(get_instrument_list_prompt())
         parser = JsonOutputParser()
         chain = prompt | llm | parser
 

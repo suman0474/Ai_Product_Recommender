@@ -349,3 +349,10 @@ export type AgenticCheckpoint =
   | "analysisError"
   | "knowledgeQuestion"
   | "default";
+
+export interface ModifyInstrumentsRequest {
+  modification_request: string;
+  current_instruments: any[];
+  current_accessories: any[];
+  session_id?: string;
+}

@@ -383,7 +383,7 @@ class IntentClassificationRoutingAgent:
     Workflow Routing:
     - solution → Solution Workflow (complex systems)
     - requirements, additional_specs → Instrument Identifier Workflow
-    - question, productInfo, greeting, confirm, reject → Product Info Workflow
+    - question, productInfo, greeting, confirm, reject → EnGenie Chat Workflow
     - chitchat, unrelated → OUT_OF_DOMAIN (reject)
     """
 
@@ -457,6 +457,32 @@ class IntentClassificationRoutingAgent:
         # Default: consider relevant to respect workflow lock
         return True
 
+    def _has_strong_solution_indicators(self, query: str) -> bool:
+        """
+        Check if query has strong indicators of a solution/system request.
+        
+        These indicators should preempt fast pattern matching for standards/keywords.
+        Examples: "select and specify", "complete system", "design a system"
+        """
+        query_lower = query.lower().strip()
+        
+        strong_indicators = [
+            "select and specify",
+            "complete system",
+            "design a system",
+            "design a solution",
+            "pump system",
+            "measurement system",
+            "control system",
+            "instrumentation system",
+            "complete instrumentation",
+            "holistic solution",
+            "full solution",
+            "entire system"
+        ]
+        
+        return any(indicator in query_lower for indicator in strong_indicators)
+
     @debug_log("INTENT_ROUTER", log_args=False)
     @timed_execution("INTENT_ROUTER", threshold_ms=2000)
     def classify(
@@ -523,7 +549,6 @@ class IntentClassificationRoutingAgent:
             # Map workflow to target
             workflow_map = {
                 "engenie_chat": WorkflowTarget.ENGENIE_CHAT,
-                "product_info": WorkflowTarget.ENGENIE_CHAT,
                 "instrument_identifier": WorkflowTarget.INSTRUMENT_IDENTIFIER,
                 "solution": WorkflowTarget.SOLUTION_WORKFLOW
             }
@@ -550,7 +575,75 @@ class IntentClassificationRoutingAgent:
             )
 
         # =====================================================================
-        # STEP 3: SEMANTIC CLASSIFICATION (PRIMARY - Embedding Similarity)
+        # STEP 3.5: FAST PATTERN CLASSIFICATION (Regex - Zero Latency)
+        # =====================================================================
+        # Pre-check simple knowledge queries to avoid Semantic Embedding latency (200ms vs 0ms)
+        
+        # FIX: Check for strong solution indicators FIRST to prevent misrouting complex queries
+        if self._has_strong_solution_indicators(query):
+            logger.info(f"[{self.name}] Strong solution indicators detected - Skipping Fast Pattern Check to favor Solution Workflow")
+        else:
+            try:
+                from agentic.engenie_chat.engenie_chat_intent_agent import classify_by_patterns, DataSource
+                
+                # Fast pattern check
+                pattern_result = classify_by_patterns(query.lower().strip())
+                
+                if pattern_result:
+                    source, conf, reason = pattern_result
+                    # Only use if high confidence (which patterns usually are)
+                    if conf >= 0.8:
+                        logger.info(
+                            f"[{self.name}] FAST PATTERN: {source.value} (conf={conf:.2f}) - "
+                            f"Skipping Semantic Classifier"
+                        )
+                        
+                        target_rag = None
+                        intent_name = "question"
+                        
+                        # Map Source -> Target RAG & Intent
+                        if source == DataSource.STANDARDS_RAG:
+                            target_rag = "standards_rag" 
+                            intent_name = "standards"
+                        elif source == DataSource.STRATEGY_RAG:
+                            target_rag = "strategy_rag"
+                            intent_name = "vendor_strategy"
+                        elif source == DataSource.INDEX_RAG:
+                            target_rag = "product_info_rag"
+                            intent_name = "product_info"
+                        elif source == DataSource.DEEP_AGENT:
+                            target_rag = "product_info_rag" # Deep agent is part of product info
+                            intent_name = "deep_agent"
+                            
+                        # Calculate time
+                        end_time = datetime.now()
+                        classification_time_ms = (end_time - start_time).total_seconds() * 1000
+                        
+                        return WorkflowRoutingResult(
+                            query=query,
+                            target_workflow=WorkflowTarget.ENGENIE_CHAT,
+                            intent=intent_name,
+                            confidence=conf,
+                            reasoning=f"Fast Pattern Match: {reason}",
+                            is_solution=False,
+                            target_rag=target_rag,
+                            solution_indicators=[],
+                            extracted_info={
+                                "fast_pattern_match": True,
+                                "source": source.value, 
+                                "pattern_reason": reason
+                            },
+                            classification_time_ms=classification_time_ms,
+                            timestamp=datetime.now().isoformat(),
+                            reject_message=None
+                        )
+            except ImportError:
+                pass # Ignore if module not found, proceed to semantic
+            except Exception as e:
+                logger.warning(f"[{self.name}] Fast pattern check failed: {e}")
+
+        # =====================================================================
+        # STEP 4: SEMANTIC CLASSIFICATION (PRIMARY - Embedding Similarity)
         # =====================================================================
         # Use semantic embeddings to classify intent based on similarity
         # to pre-defined workflow signature patterns
@@ -672,7 +765,11 @@ class IntentClassificationRoutingAgent:
         # =================================================================
         # If is_solution is True, verify with semantic classifier that this
         # is actually a design/build request, not a knowledge query
-        if is_solution:
+        
+        # FIX: Don't run semantic override if we have strong solution indicators
+        has_strong_indicators = self._has_strong_solution_indicators(query)
+        
+        if is_solution and not has_strong_indicators:
             try:
                 from agentic.engenie_chat.engenie_chat_intent_agent import classify_query, DataSource
                 semantic_source, semantic_conf, semantic_reason = classify_query(query, use_semantic_llm=False)
@@ -701,11 +798,15 @@ class IntentClassificationRoutingAgent:
                         intent = "vendor_strategy"
                     else:
                         intent = "question"
+                else:
+                    logger.debug(f"[{self.name}] Phase 3 validation passed (Source: {semantic_source.value})")
                         
             except ImportError:
                 logger.debug(f"[{self.name}] Semantic classifier not available for validation")
             except Exception as e:
                 logger.warning(f"[{self.name}] Semantic validation failed: {e}")
+        elif is_solution and has_strong_indicators:
+             logger.info(f"[{self.name}] Phase 3 validation skipped (Strong solution indicators present)")
 
         # =================================================================
         # LEVEL 4.5: Registry-based workflow matching with fallback
@@ -726,8 +827,7 @@ class IntentClassificationRoutingAgent:
                     workflow_name_to_target = {
                         "solution": WorkflowTarget.SOLUTION_WORKFLOW,
                         "instrument_identifier": WorkflowTarget.INSTRUMENT_IDENTIFIER,
-                        "product_info": WorkflowTarget.ENGENIE_CHAT,
-                        "engenie_chat": WorkflowTarget.ENGENIE_CHAT  # EnGenie Chat maps to ProductInfo target
+                        "engenie_chat": WorkflowTarget.ENGENIE_CHAT
                     }
                     target_workflow = workflow_name_to_target.get(
                         registry_match.workflow.name, 

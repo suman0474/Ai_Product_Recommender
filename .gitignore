@@ -10,7 +10,6 @@ build/
 .vscode/
 .idea/
 venv/
-chroma_data/
 coverage/
 .pytest_cache/
 *.md
@@ -18,3 +17,5 @@ coverage/
 !README.md
 static/images/
 retry_times.txt
+failed_image_generations.json
+

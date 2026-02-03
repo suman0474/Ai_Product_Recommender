@@ -509,14 +509,14 @@ class WorkflowRegistry:
                     reasoning=f"Intent '{intent}' matched to '{workflow_name}'"
                 )
         
-        # Priority 3: Fallback to product_info for unknown intents
-        fallback = self._workflows.get("product_info")
+        # Priority 3: Fallback to engenie_chat for unknown intents
+        fallback = self._workflows.get("engenie_chat")
         if fallback and fallback.is_enabled:
-            logger.debug(f"[WorkflowRegistry] Unknown intent '{intent}', falling back to 'product_info'")
+            logger.debug(f"[WorkflowRegistry] Unknown intent '{intent}', falling back to 'engenie_chat'")
             return MatchResult(
                 workflow=fallback,
                 confidence=0.5,  # Lower confidence for fallback
-                reasoning=f"Unknown intent '{intent}', defaulting to Product Info"
+                reasoning=f"Unknown intent '{intent}', defaulting to EnGenie Chat"
             )
         
         logger.warning(f"[WorkflowRegistry] No matching workflow for intent '{intent}'")

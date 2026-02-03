@@ -427,7 +427,7 @@ def classify_query(query: str, use_semantic_llm: bool = True) -> Tuple[DataSourc
     query_lower = query.lower().strip()
 
     # Stage 1: Pattern-based classification (highest priority)
-    pattern_result = _classify_by_patterns(query_lower)
+    pattern_result = classify_by_patterns(query_lower)
     if pattern_result:
         source, confidence, reasoning = pattern_result
         logger.info(f"[INTENT] Pattern match: {source.value} (confidence: {confidence:.2f})")
@@ -488,7 +488,7 @@ def classify_query(query: str, use_semantic_llm: bool = True) -> Tuple[DataSourc
     return primary_source, confidence, reasoning
 
 
-def _classify_by_patterns(query_lower: str) -> Optional[Tuple[DataSource, float, str]]:
+def classify_by_patterns(query_lower: str) -> Optional[Tuple[DataSource, float, str]]:
     """
     Classify query using regex patterns for strong structural indicators.
     Returns None if no strong pattern match found.
@@ -893,7 +893,7 @@ def test_classification(queries: List[str] = None) -> List[Dict]:
             query, expected = item, None
 
         source, confidence, reasoning = classify_query(query)
-        should_route, route_confidence = is_product_info_intent(query)
+        should_route, route_confidence = is_engenie_chat_intent(query)
         is_followup = is_follow_up_query(query)
 
         result = {
@@ -902,7 +902,7 @@ def test_classification(queries: List[str] = None) -> List[Dict]:
             "actual": source.value,
             "confidence": confidence,
             "reasoning": reasoning,
-            "should_route_to_product_info": should_route,
+            "should_route_to_engenie_chat": should_route,
             "route_confidence": route_confidence,
             "is_follow_up": is_followup,
             "passed": expected is None or source == expected

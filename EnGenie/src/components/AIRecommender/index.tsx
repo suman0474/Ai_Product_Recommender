@@ -23,7 +23,6 @@ import {
   getRequirementSchema,
   structureRequirements,
   additionalRequirements,
-  classifyIntent,
   classifyRoute,
   discoverAdvancedParameters,
   addAdvancedParameters,
@@ -36,6 +35,7 @@ import {
   identifyInstruments,
   callAgenticProductSearch,
   resumeProductSearch,
+  modifyInstruments,
   BASE_URL,
 } from "./api";
 import { useToast } from "@/hooks/use-toast";
@@ -954,7 +954,7 @@ const AIRecommender = ({
   }, [collectedData, state.productType, performAnalysis, streamAssistantMessage, addMessage, searchSessionId, isDirectSearch]);
 
   // Helper function to run direct product search from RightPanel
-  const handleRunProductSearch = async (sampleInput: string) => {
+  const handleRunProductSearch = useCallback(async (sampleInput: string) => {
     console.log(`[${searchSessionId}] ====== PRODUCT SEARCH TRIGGERED ======`);
     console.log(`[${searchSessionId}] sampleInput: ${sampleInput?.substring(0, 100)}...`);
     console.log(`[${searchSessionId}] searchSessionId: ${searchSessionId}`);
@@ -1109,7 +1109,7 @@ const AIRecommender = ({
       console.log(`[${searchSessionId}] [AGENTIC_PS] ====== PRODUCT SEARCH COMPLETE ======`);
       setState((prev) => ({ ...prev, isLoading: false }));
     }
-  };
+  }, [searchSessionId, propProductType, state.productType, isDirectSearch, propItemThreadId, propWorkflowThreadId]);
 
   // NEW: Handler for populating input without auto-submitting
   const handlePopulateInput = useCallback((sampleInput: string) => {
@@ -1123,6 +1123,97 @@ const AIRecommender = ({
     async (userInput: string) => {
       const trimmedInput = userInput.trim();
       if (!trimmedInput) return;
+
+      // NEW: Intercept Direct Search (manual trigger) - Route to Product Search Workflow
+      // This ensures we use the correct workflow context (thread IDs) passed via props
+      if (isDirectSearch && state.messages.length === 0) {
+        handleRunProductSearch(trimmedInput);
+        setState((prev) => ({ ...prev, inputValue: "" }));
+        return;
+      }
+
+      // NEW: Intercept /modify command for instrument modification
+      if (trimmedInput.toLowerCase().startsWith("/modify")) {
+        const modificationRequest = trimmedInput.replace(/^\/modify\s*/i, "").trim();
+
+        // Add user message immediately
+        addMessage({ type: "user", content: trimmedInput, role: undefined });
+        setState((prev) => ({ ...prev, inputValue: "", isLoading: true }));
+
+        if (!modificationRequest) {
+          await streamAssistantMessage("Please provide a modification request, e.g., '/modify Add a thermowell'.");
+          setState((prev) => ({ ...prev, isLoading: false }));
+          return;
+        }
+
+        if (!state.identifiedItems || state.identifiedItems.length === 0) {
+          await streamAssistantMessage("There are no identified instruments to modify. Please run instrument identification first.");
+          setState((prev) => ({ ...prev, isLoading: false }));
+          return;
+        }
+
+        try {
+          // Filter current items
+          const instruments = state.identifiedItems.filter(i => i.type === 'instrument');
+          const accessories = state.identifiedItems.filter(i => i.type === 'accessory');
+
+          // Call the modifyInstruments API
+          // Note: modifyInstruments expects snake_case/backend compatible naming, which the API wrapper handles
+          // We pass the raw items, the API wrapper + backend prompt handles the rest.
+          const result = (await modifyInstruments(
+            modificationRequest,
+            instruments,
+            accessories,
+            searchSessionId
+          )) as any;
+
+          if (result.error) {
+            await streamAssistantMessage(`Modification failed: ${result.error}`);
+          } else {
+            // Map results back to IdentifiedItem structure for state
+            // Note: result.instruments contains IdentifiedInstrument (camelCase from convertKeysToCamelCase)
+            const newItems: any[] = [
+              ...(result.instruments || []).map((i: any, idx: number) => ({
+                number: idx + 1,
+                type: 'instrument' as const,
+                name: i.productName || i.name || i.category,
+                category: i.category,
+                quantity: i.quantity,
+                keySpecs: typeof i.specifications === 'string' ? i.specifications :
+                  Object.entries(i.specifications || {}).map(([k, v]) => `${k}: ${v}`).join(', '),
+                sampleInput: i.sampleInput,
+                specifications: i.specifications // Keep raw specs if needed
+              })),
+              ...(result.accessories || []).map((a: any, idx: number) => ({
+                number: (result.instruments?.length || 0) + idx + 1,
+                type: 'accessory' as const,
+                name: a.accessoryName || a.name || a.category,
+                category: a.category,
+                quantity: a.quantity,
+                keySpecs: typeof a.specifications === 'string' ? a.specifications :
+                  Object.entries(a.specifications || {}).map(([k, v]) => `${k}: ${v}`).join(', '),
+                sampleInput: a.sampleInput,
+                specifications: a.specifications
+              }))
+            ];
+
+            setState(prev => ({
+              ...prev,
+              identifiedItems: newItems,
+              // Also update collectedData if necessary (though usually for single product search)
+            }));
+
+            // Show the friendly message from the agent
+            const msg = result.message || result.summary || "Modifications applied successfully.";
+            await streamAssistantMessage(msg);
+          }
+        } catch (e: any) {
+          console.error("Modification error:", e);
+          await streamAssistantMessage(`An error occurred during modification: ${e.message}`);
+        }
+        setState(prev => ({ ...prev, isLoading: false }));
+        return;
+      }
 
       // Add user message
       addMessage({ type: "user", content: trimmedInput, role: undefined });
@@ -1369,8 +1460,14 @@ const AIRecommender = ({
         }
 
         // Step 1: Classify user intent (with session ID for isolation)
-        const intentResult: IntentClassificationResult = await classifyIntent(trimmedInput, searchSessionId);
-        console.log('Intent classification result:', intentResult);
+        // Refactored to use result from classifyRoute called above
+        const intentResult: IntentClassificationResult = {
+          intent: routingResult.intent as IntentClassificationResult['intent'],
+          nextStep: routingResult.extracted_info?.next_step || null,
+          resumeWorkflow: false,
+          isSolution: routingResult.target_workflow === 'solution'
+        };
+        console.log('Intent classification result (mapped):', intentResult);
 
         // Handle knowledge questions (interrupts workflow)
         if (intentResult.intent === "knowledgeQuestion") {
@@ -2033,7 +2130,7 @@ const AIRecommender = ({
         setState((prev) => ({ ...prev, isLoading: false }));
       }
     },
-    [currentStep, collectedData, state.productType, state.validationResult, state.requirementSchema, addMessage, performAnalysis, handleShowSummaryAndProceed, streamAssistantMessage, searchSessionId, productSearchWorkflow]
+    [currentStep, collectedData, state.productType, state.validationResult, state.requirementSchema, addMessage, performAnalysis, handleShowSummaryAndProceed, streamAssistantMessage, searchSessionId, productSearchWorkflow, isDirectSearch, handleRunProductSearch]
   );
 
   const setInputValue = useCallback((value: string) => {
@@ -2074,14 +2171,12 @@ const AIRecommender = ({
         console.log(`[${searchSessionId}] inputParam: ${inputParam?.substring(0, 100)}...`);
 
         if (isDirectSearch && inputParam) {
-          // DIRECT SEARCH: Auto-trigger product search workflow immediately
-          console.log(`[${searchSessionId}] ⚡ DIRECT SEARCH MODE - Auto-triggering handleRunProductSearch`);
+          // DIRECT SEARCH: Just populate input, allow user to click Send.
+          // This allows editing the sample input before starting search.
+          console.log(`[${searchSessionId}] ⚡ DIRECT SEARCH MODE - Setting input value (Auto-run disabled)`);
+
+          setState((prev) => ({ ...prev, inputValue: inputParam }));
           setHasAutoSubmitted(true);
-          // Use setTimeout to ensure state is ready
-          setTimeout(() => {
-            console.log(`[${searchSessionId}] Executing handleRunProductSearch with sampleInput`);
-            handleRunProductSearch(inputParam);
-          }, 100);
         } else {
           // NORMAL MODE: Just set the input value, let user decide when to submit
           console.log(`[${searchSessionId}] Normal mode - setting input value for user to submit`);

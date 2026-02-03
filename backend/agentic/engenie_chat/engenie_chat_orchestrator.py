@@ -509,21 +509,7 @@ def run_engenie_chat_query(
 # BACKWARD COMPATIBILITY ALIAS
 # =============================================================================
 
-def run_product_info_query(user_input: str, session_id: str) -> Dict[str, Any]:
-    """
-    Backward compatibility alias for run_engenie_chat_query.
-    
-    This function exists to maintain compatibility with code that imports
-    run_product_info_query. It simply delegates to run_engenie_chat_query.
-    
-    Args:
-        user_input: User's question or query
-        session_id: Session identifier for conversation tracking
-    
-    Returns:
-        Response dict with answer and metadata
-    """
-    return run_engenie_chat_query(user_input=user_input, session_id=session_id)
+
 
 
 # =============================================================================
@@ -537,38 +523,7 @@ def _register_workflow():
         
         registry = get_workflow_registry()
         
-        # Register as "product_info" (primary, higher priority)
-        registry.register(WorkflowMetadata(
-            name="product_info",
-            display_name="Product Info / EnGenie Chat",
-            description="Handles questions about products, standards, vendors, and general industrial automation knowledge. Routes to appropriate RAG sources: Index RAG, Standards RAG, Strategy RAG, Deep Agent, or LLM fallback.",
-            keywords=[
-                "question", "what is", "tell me", "explain", "compare", "difference",
-                "standard", "certification", "vendor", "supplier", "specification",
-                "how does", "why", "when", "which", "datasheet", "model",
-                "help", "information", "about"
-            ],
-            intents=[
-                "question", "productinfo", "product_info", "greeting", "confirm", "reject",
-                "standards", "vendor_strategy", "grounded_chat", "comparison", "chitchat"
-            ],
-            capabilities=[
-                "rag_routing",
-                "hybrid_sources",
-                "follow_up_detection",
-                "memory_context",
-                "parallel_query",
-                "llm_fallback",
-                "streaming"
-            ],
-            entry_function=run_engenie_chat_query,  # Use EnGenie Chat implementation
-            priority=50,  # Primary workflow - default fallback
-            tags=["core", "knowledge", "rag", "chat"],
-            min_confidence_threshold=0.4
-        ))
-        logger.info("[EnGenieChatOrchestrator] Registered as 'product_info' (primary)")
-        
-        # Also register as "engenie_chat" (secondary, lower priority)
+        # Register as "engenie_chat" (Primary)
         registry.register(WorkflowMetadata(
             name="engenie_chat",
             display_name="EnGenie Chat",
@@ -593,11 +548,13 @@ def _register_workflow():
                 "streaming"
             ],
             entry_function=run_engenie_chat_query,
-            priority=40,  # Alternative to product_info for conversational queries
+            priority=50,  # Primary workflow
             tags=["core", "knowledge", "rag", "chat", "conversational"],
-            min_confidence_threshold=0.35  # More flexible
+            min_confidence_threshold=0.35  # Flexible
         ))
-        logger.info("[EnGenieChatOrchestrator] Registered as 'engenie_chat' (alternative)")
+        logger.info("[EnGenieChatOrchestrator] Registered as 'engenie_chat' (primary)")
+        
+
         
     except ImportError as e:
         logger.debug(f"[EnGenieChatOrchestrator] Registry not available: {e}")
@@ -614,7 +571,6 @@ _register_workflow()
 
 __all__ = [
     'run_engenie_chat_query',
-    'run_product_info_query',  # Backward compatibility alias
     'query_index_rag',
     'query_standards_rag',
     'query_strategy_rag',

@@ -13,30 +13,41 @@ logger = logging.getLogger(__name__)
 # PDF TEXT CACHE
 # ============================================================================
 
-# Cache for extracted PDF text to avoid re-extraction
-_pdf_text_cache: Dict[str, str] = {}
-_pdf_metadata_cache: Dict[str, Dict[str, Any]] = {}
+# [PHASE 1] Using BoundedCache with TTL/LRU to prevent unbounded memory growth
+# PDF text can be large - limit cache size appropriately
+from agentic.caching.bounded_cache_manager import get_or_create_cache, BoundedCache
+
+_pdf_text_cache: BoundedCache = get_or_create_cache(
+    name="pdf_text",
+    max_size=50,            # Max 50 PDFs (LRU eviction when full)
+    ttl_seconds=7200        # 2 hour cache lifespan
+)
+
+_pdf_metadata_cache: BoundedCache = get_or_create_cache(
+    name="pdf_metadata",
+    max_size=100,           # Metadata is smaller, can cache more
+    ttl_seconds=7200        # 2 hour cache lifespan
+)
 
 
 def get_cached_pdf_text(blob_path: str) -> Optional[str]:
-    """Get cached PDF text if available."""
+    """Get cached PDF text if available (with automatic TTL expiration)."""
     return _pdf_text_cache.get(blob_path)
 
 
 def cache_pdf_text(blob_path: str, text: str, metadata: Dict[str, Any] = None):
-    """Cache extracted PDF text."""
-    _pdf_text_cache[blob_path] = text
+    """Cache extracted PDF text (with automatic LRU eviction when full)."""
+    _pdf_text_cache.set(blob_path, text)
     if metadata:
-        _pdf_metadata_cache[blob_path] = metadata
-    logger.debug(f"[PDFIndexer] Cached PDF text for: {blob_path}")
+        _pdf_metadata_cache.set(blob_path, metadata)
+    logger.debug(f"[PDFIndexer] Cached PDF text for: {blob_path} (cache size: {len(_pdf_text_cache)})")
 
 
 def clear_pdf_cache():
     """Clear the PDF text cache."""
-    global _pdf_text_cache, _pdf_metadata_cache
-    _pdf_text_cache = {}
-    _pdf_metadata_cache = {}
-    logger.info("[PDFIndexer] PDF cache cleared")
+    text_count = _pdf_text_cache.clear()
+    metadata_count = _pdf_metadata_cache.clear()
+    logger.info(f"[PDFIndexer] PDF cache cleared ({text_count} text entries, {metadata_count} metadata entries)")
 
 
 # ============================================================================

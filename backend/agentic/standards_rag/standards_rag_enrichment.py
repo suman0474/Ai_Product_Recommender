@@ -26,6 +26,7 @@ logger = logging.getLogger(__name__)
 # =============================================================================
 # Minimum number of specifications required for complete enrichment
 MIN_STANDARDS_SPECS_COUNT = 30
+MAX_SPECS_PER_ITEM = 100  # Safety cap for standards-based enrichment
 
 # =============================================================================
 # PRODUCT TYPE CACHE (Performance Optimization)
