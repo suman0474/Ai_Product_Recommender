@@ -6171,99 +6171,113 @@ def create_db():
             db.session.add(admin)
             db.session.commit()
             print("Admin user created with username 'Daman' and password 'Daman@123'.")
-if __name__ == "__main__":
-    create_db()
-    import os
 
-    # Initialize automatic checkpoint cleanup (Phase 1 improvement)
-    # Prevents unbounded memory growth from checkpoint accumulation
-    try:
-        from agentic.checkpointing import CheckpointManager, start_auto_checkpoint_cleanup
 
-        # Create checkpoint manager with Azure Blob Storage (production-ready)
-        # Falls back to memory if Azure credentials not configured
-        checkpoint_manager = CheckpointManager(
-            backend="azure_blob",
-            max_age_hours=72,
-            max_checkpoints_per_user=100,
-            # Azure Blob specific config (loaded from environment)
-            container_prefix="workflow-checkpoints",
-            default_zone="DEFAULT",
-            ttl_hours=72,
-            use_managed_identity=False
-        )
-        start_auto_checkpoint_cleanup(
-            checkpoint_manager,
-            cleanup_interval_seconds=300,  # Run cleanup every 5 minutes
-            max_age_hours=72  # Remove checkpoints older than 72 hours
-        )
-        logging.info("Automatic checkpoint cleanup initialized successfully with Azure Blob Storage")
-    except Exception as e:
-        logging.warning(f"Failed to initialize checkpoint cleanup: {e}")
+# =========================================================================
+# === APPLICATION INITIALIZATION (Runs on both Gunicorn and Dev Server) ===
+# =========================================================================
+# This section runs when the module is imported (e.g., by gunicorn main:app)
 
-    # Initialize automatic session cleanup (Phase 2 improvement)
-    # Prevents memory leaks from accumulated session files
-    session_cleanup_manager = None
-    try:
-        from agentic.session_cleanup_manager import SessionCleanupManager
+# Create database tables and admin user
+create_db()
 
-        session_dir = app.config.get("SESSION_FILE_DIR", "/tmp/flask_session")
-        session_cleanup_manager = SessionCleanupManager(
-            session_dir=session_dir,
-            cleanup_interval=600,  # Run cleanup every 10 minutes
-            max_age_hours=24  # Remove sessions older than 24 hours
-        )
-        session_cleanup_manager.start()
-        logging.info("Automatic session cleanup initialized successfully with proper lifecycle")
-    except Exception as e:
-        logging.warning(f"Failed to initialize session cleanup: {e}")
+# Initialize automatic checkpoint cleanup (Phase 1 improvement)
+# Prevents unbounded memory growth from checkpoint accumulation
+checkpoint_manager = None
+try:
+    from agentic.checkpointing import CheckpointManager, start_auto_checkpoint_cleanup
 
-    # Initialize bounded workflow state management (Phase 4 improvement)
-    # Prevents OOM crashes from unbounded state accumulation
-    try:
-        from agentic.workflow_state_manager import stop_workflow_state_manager
+    # Create checkpoint manager with Azure Blob Storage (production-ready)
+    # Falls back to memory if Azure credentials not configured
+    checkpoint_manager = CheckpointManager(
+        backend="azure_blob",
+        max_age_hours=72,
+        max_checkpoints_per_user=100,
+        # Azure Blob specific config (loaded from environment)
+        container_prefix="workflow-checkpoints",
+        default_zone="DEFAULT",
+        ttl_hours=72,
+        use_managed_identity=False
+    )
+    start_auto_checkpoint_cleanup(
+        checkpoint_manager,
+        cleanup_interval_seconds=300,  # Run cleanup every 5 minutes
+        max_age_hours=72  # Remove checkpoints older than 72 hours
+    )
+    logging.info("Automatic checkpoint cleanup initialized successfully with Azure Blob Storage")
+except Exception as e:
+    logging.warning(f"Failed to initialize checkpoint cleanup: {e}")
 
-        logging.info("Workflow state manager initialized with bounded memory and auto-cleanup")
-    except Exception as e:
-        logging.warning(f"Failed to initialize workflow state manager: {e}")
+# Initialize automatic session cleanup (Phase 2 improvement)
+# Prevents memory leaks from accumulated session files
+session_cleanup_manager = None
+try:
+    from agentic.session_cleanup_manager import SessionCleanupManager
 
-    # Register shutdown handler for graceful cleanup (Phase 3-4 improvements)
-    def shutdown_cleanup():
-        """Graceful shutdown handler for all background managers."""
-        # Stop session cleanup (Phase 3)
-        if session_cleanup_manager:
-            try:
-                logging.info("[SHUTDOWN] Stopping session cleanup manager...")
-                session_cleanup_manager.stop()
-                logging.info("[SHUTDOWN] Session cleanup manager stopped successfully")
-            except Exception as e:
-                logging.error(f"[SHUTDOWN] Error stopping session cleanup: {e}")
+    session_dir = app.config.get("SESSION_FILE_DIR", "/tmp/flask_session")
+    session_cleanup_manager = SessionCleanupManager(
+        session_dir=session_dir,
+        cleanup_interval=600,  # Run cleanup every 10 minutes
+        max_age_hours=24  # Remove sessions older than 24 hours
+    )
+    session_cleanup_manager.start()
+    logging.info("Automatic session cleanup initialized successfully with proper lifecycle")
+except Exception as e:
+    logging.warning(f"Failed to initialize session cleanup: {e}")
 
-        # Stop workflow state manager (Phase 4)
+# Initialize bounded workflow state management (Phase 4 improvement)
+# Prevents OOM crashes from unbounded state accumulation
+try:
+    from agentic.workflow_state_manager import stop_workflow_state_manager
+    logging.info("Workflow state manager initialized with bounded memory and auto-cleanup")
+except Exception as e:
+    logging.warning(f"Failed to initialize workflow state manager: {e}")
+
+
+# Register shutdown handler for graceful cleanup (Phase 3-4 improvements)
+def shutdown_cleanup():
+    """Graceful shutdown handler for all background managers."""
+    # Stop session cleanup (Phase 3)
+    if session_cleanup_manager:
         try:
-            logging.info("[SHUTDOWN] Stopping workflow state manager...")
-            stop_workflow_state_manager()
-            logging.info("[SHUTDOWN] Workflow state manager stopped successfully")
+            logging.info("[SHUTDOWN] Stopping session cleanup manager...")
+            session_cleanup_manager.stop()
+            logging.info("[SHUTDOWN] Session cleanup manager stopped successfully")
         except Exception as e:
-            logging.error(f"[SHUTDOWN] Error stopping workflow state manager: {e}")
+            logging.error(f"[SHUTDOWN] Error stopping session cleanup: {e}")
 
-    # Register cleanup to run ONLY on application shutdown (not per-request)
-    import atexit
-    atexit.register(shutdown_cleanup)
-
-    # Pre-warm standards document cache (Task #6 - Performance Optimization)
-    # Loads all standard documents into memory at startup to eliminate cache-miss delays
+    # Stop workflow state manager (Phase 4)
     try:
-        from agentic.deep_agent.standards_deep_agent import prewarm_document_cache
-
-        logging.info("Pre-warming standards document cache...")
-        cache_stats = prewarm_document_cache()
-        logging.info(
-            f"Standards cache pre-warmed: {cache_stats['success']}/{cache_stats['total']} "
-            f"documents loaded in {cache_stats['elapsed_seconds']}s"
-        )
+        logging.info("[SHUTDOWN] Stopping workflow state manager...")
+        stop_workflow_state_manager()
+        logging.info("[SHUTDOWN] Workflow state manager stopped successfully")
     except Exception as e:
-        logging.warning(f"Failed to pre-warm standards document cache: {e}")
-        logging.warning("Standards will be loaded on-demand (slower first request)")
+        logging.error(f"[SHUTDOWN] Error stopping workflow state manager: {e}")
 
+
+# Register cleanup to run ONLY on application shutdown (not per-request)
+import atexit
+atexit.register(shutdown_cleanup)
+
+# Pre-warm standards document cache (Task #6 - Performance Optimization)
+# Loads all standard documents into memory at startup to eliminate cache-miss delays
+try:
+    from agentic.deep_agent.standards_deep_agent import prewarm_document_cache
+
+    logging.info("Pre-warming standards document cache...")
+    cache_stats = prewarm_document_cache()
+    logging.info(
+        f"Standards cache pre-warmed: {cache_stats['success']}/{cache_stats['total']} "
+        f"documents loaded in {cache_stats['elapsed_seconds']}s"
+    )
+except Exception as e:
+    logging.warning(f"Failed to pre-warm standards document cache: {e}")
+    logging.warning("Standards will be loaded on-demand (slower first request)")
+
+
+# =========================================================================
+# === DEVELOPMENT SERVER (Only runs when executed directly) ===
+# =========================================================================
+if __name__ == "__main__":
+    # Run Flask development server
     app.run(debug=True, host="0.0.0.0", port=5000, threaded=True, use_reloader=False)
