@@ -1,0 +1,50 @@
+================================================================================
+SPECIFICATION VALIDATION REPORT: Pressure_Relief_Valve
+================================================================================
+
+SUMMARY:
+  Total Specifications: 31
+  Valid Technical Specs: 1 (3.2%)
+  Invalid/Procedural: 30 (96.8%)
+
+BREAKDOWN BY TYPE:
+  equipment_list: 3
+  frequency_text: 1
+  generic_text: 10
+  procedural_text: 15
+  selection_criteria: 1
+  technical_value: 1
+
+RECOMMENDED ACTIONS:
+
+✓ KEEP AS TECHNICAL SPECIFICATIONS (1 items):
+  • Calibration_Points: multiple points across operating range (e.g., 0, 25, 50, 75,
+
+→ MOVE TO 'PROCEDURES' SECTION (16 items):
+  • Cable_Specification: shielded twisted-pair for analog and digital signals, follow
+  • Calibration_Frequency: at least annually for safety-critical instruments
+  • Corrective_Maintenance_Action: repair or replace failed instruments promptly
+  • Data_Sheet_Fields: device tag, communication protocol, node address, power cons
+  • Documentation_Requirements: calibration data, date, technician, calibration equipment us
+  ... and 11 more
+
+→ MOVE TO 'REQUIREMENTS' SECTION (4 items):
+  • Calibration_Equipment_Types: deadweight testers, pressure pumps, electronic calibrators
+  • Communication_Protocol_Support: HART, FOUNDATION Fieldbus H1, Profibus PA/DP, Modbus RTU/TCP
+  • Intrinsic_Safety_Barrier_Selection_Criteria: gas group, temperature class, voltage/current requirements, 
+  • Signal_Conditioning_Requirements: Intrinsic safety (IS) barriers, signal isolators, surge prot
+
+✗ ITEMS TO REMOVE OR CLARIFY (10 items):
+  • Adjustment_Parameters: zero, span, linearity
+    Reason: No technical value patterns detected
+  • Calibration_Equipment_Accuracy_Traceability: NIST-traceable accuracy for pressure calibrators
+    Reason: No technical value patterns detected
+  • Calibration_Equipment_Maintenance: calibrate and certify regularly, store in protective cases, 
+    Reason: No technical value patterns detected
+  • Hysteresis_Minimization: yes
+    Reason: No technical value patterns detected
+  • Management_System: CMMS or AMS for planning and tracking
+    Reason: No technical value patterns detected
+  ... and 5 more
+
+================================================================================
