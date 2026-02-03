@@ -150,7 +150,7 @@ class SchemaGenerationDeepAgent:
     def llm(self):
         """Lazy load LLM."""
         if self._llm is None:
-            from llm_fallback import create_fallback_llm
+            from services.llm.fallback import create_fallback_llm
             self._llm = create_fallback_llm(skip_test=True)
         return self._llm
 

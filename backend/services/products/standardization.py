@@ -5,7 +5,7 @@ import json
 import logging
 import os
 from typing import Dict, Any, List, Optional
-from llm_standardization import standardize_with_llm
+from services.llm.standardization import standardize_with_llm
 from flask import jsonify
 import re
 
@@ -670,7 +670,7 @@ def suggest_standard_product_type(product_type: str) -> str:
     
     # First try LLM standardization (with timeout protection using threading)
     try:
-        from llm_standardization import LLMStandardizer
+        from services.llm.standardization import LLMStandardizer
         import threading
         import time
         
@@ -720,7 +720,7 @@ def suggest_standard_product_type(product_type: str) -> str:
         
         try:
             # Try a simpler LLM approach without threading
-            from llm_standardization import LLMStandardizer
+            from services.llm.standardization import LLMStandardizer
             standardizer = LLMStandardizer()
             
             # Use a simple direct prompt
@@ -842,7 +842,7 @@ def standardize_vendor_name(vendor: str) -> str:
     
     try:
         # Use LLM for vendor standardization
-        from llm_standardization import LLMStandardizer
+        from services.llm.standardization import LLMStandardizer
         
         standardizer = LLMStandardizer()
         

@@ -141,7 +141,7 @@ class BaseRAGAgent(ABC):
         Returns:
             Configured LLM instance
         """
-        from llm_fallback import create_llm_with_fallback
+        from services.llm.fallback import create_llm_with_fallback
 
         return create_llm_with_fallback(
             model=self.model,

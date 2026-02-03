@@ -18,7 +18,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser, JsonOutputParser
 from pydantic import BaseModel, Field
 
-from llm_fallback import create_llm_with_fallback
+from services.llm.fallback import create_llm_with_fallback
 from prompts_library import load_prompt_sections
 logger = logging.getLogger(__name__)
 

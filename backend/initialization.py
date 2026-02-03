@@ -371,7 +371,7 @@ def initialize_singletons() -> None:
 
     # Initialize Image Generation Retry Worker (FIX 4)
     try:
-        from generic_image_utils import start_retry_worker
+        from services.azure.image_utils import start_retry_worker
         start_retry_worker()
         logger.info("[INIT]   ✓ Image generation retry worker started")
     except ImportError:

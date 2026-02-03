@@ -228,8 +228,8 @@ def discover_vendors_tool(product_type: str) -> Dict[str, Any]:
     try:
         logger.info(f"[PPI_TOOL] Discovering vendors for: {product_type}")
         
-        from loading import discover_top_vendors
-        from llm_fallback import create_llm_with_fallback
+        from core.loading import discover_top_vendors
+        from services.llm.fallback import create_llm_with_fallback
         
         llm = create_llm_with_fallback(
             model="gemini-2.5-flash",
@@ -428,7 +428,7 @@ def download_and_store_pdf_tool(
         logger.info(f"[PPI_TOOL] Downloaded {len(pdf_data)} bytes")
         
         # Store in Azure Blob
-        from azure_blob_utils import azure_blob_file_manager
+        from services.azure.blob_utils import azure_blob_file_manager
         
         # Generate filename
         import re
@@ -486,7 +486,7 @@ def extract_pdf_data_tool(
     MAX_RETRIES = 2
     BACKOFF_BASE = 2  # seconds
     
-    from extraction_engine import extract_data_from_pdf, send_to_language_model
+    from core.extraction_engine import extract_data_from_pdf, send_to_language_model
     
     for attempt in range(MAX_RETRIES + 1):
         try:
@@ -575,8 +575,8 @@ def generate_schema_tool(product_type: str, vendor_data: List[Dict[str, Any]]) -
     try:
         logger.info(f"[PPI_TOOL] Generating schema for {product_type} from {len(vendor_data)} vendors")
         
-        from loading import create_schema_from_vendor_data, _save_schema_to_specs
-        from llm_fallback import create_llm_with_fallback
+        from core.loading import create_schema_from_vendor_data, _save_schema_to_specs
+        from services.llm.fallback import create_llm_with_fallback
         from config import AgenticConfig
         
         llm = create_llm_with_fallback(
@@ -675,7 +675,7 @@ def store_vendor_data_tool(vendor_data: Dict[str, Any], product_type: str) -> Di
         vendor_name = vendor_data.get('vendor', 'Unknown')
         logger.info(f"[PPI_TOOL] Storing vendor data: {vendor_name}")
         
-        from azure_blob_utils import azure_blob_file_manager
+        from services.azure.blob_utils import azure_blob_file_manager
         
         # Use underscores for filename (Azure Blob paths)
         safe_vendor = vendor_name.replace(' ', '_').replace('+', '_')

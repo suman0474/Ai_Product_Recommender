@@ -373,7 +373,7 @@ class FuzzyMatchVendorsInput(BaseModel):
 def get_vendors_from_azure(product_type: str) -> List[str]:
     """Get vendors from Azure Blob Storage for a product type"""
     try:
-        from azure_blob_utils import get_vendors_for_product_type
+        from services.azure.blob_utils import get_vendors_for_product_type
         vendors = get_vendors_for_product_type(product_type)
         return vendors if vendors else []
     except Exception as e:
@@ -384,7 +384,7 @@ def get_vendors_from_azure(product_type: str) -> List[str]:
 def get_all_vendors_from_azure() -> List[str]:
     """Get all available vendors from Azure Blob Storage"""
     try:
-        from azure_blob_utils import get_available_vendors
+        from services.azure.blob_utils import get_available_vendors
         vendors = get_available_vendors()
         return vendors if vendors else []
     except Exception as e:
@@ -395,7 +395,7 @@ def get_all_vendors_from_azure() -> List[str]:
 def get_vendor_products_from_azure(vendor: str, product_type: str) -> List[Dict[str, Any]]:
     """Get products for a vendor from Azure Blob Storage"""
     try:
-        from azure_blob_utils import azure_blob_file_manager
+        from services.azure.blob_utils import azure_blob_file_manager
         # Query products from Azure Blob
         products = azure_blob_file_manager.list_files(
             'vendors',
@@ -568,7 +568,7 @@ def get_generic_product_image_tool(product_type: str) -> Dict[str, Any]:
         - error: str - Error message if failed
     """
     try:
-        from generic_image_utils import fetch_generic_product_image
+        from services.azure.image_utils import fetch_generic_product_image
 
         logger.info(f"[TOOL] Fetching generic product image for: {product_type}")
 

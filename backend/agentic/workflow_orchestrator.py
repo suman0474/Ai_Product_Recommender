@@ -30,7 +30,7 @@ from langgraph.graph import StateGraph, END
 from langgraph.prebuilt import create_react_agent
 
 # Local imports
-from llm_fallback import create_llm_with_fallback
+from services.llm.fallback import create_llm_with_fallback
 from .llm_manager import get_cached_llm
 import prompts
 logger = logging.getLogger(__name__)

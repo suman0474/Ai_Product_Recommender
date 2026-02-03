@@ -17,7 +17,7 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 # Use Azure Blob for advanced parameters storage
 from azure_blob_config import get_azure_blob_connection
 from config import AgenticConfig
-from llm_fallback import create_llm_with_fallback
+from services.llm.fallback import create_llm_with_fallback
 
 # MONGO_TTL_DAYS removed - advanced parameters persist indefinitely
 IN_MEMORY_CACHE_TTL_MINUTES = 10
@@ -203,7 +203,7 @@ def get_existing_parameters(product_type: str) -> set:
         return cached
 
     try:
-        from loading import load_requirements_schema
+        from core.loading import load_requirements_schema
 
         schema = load_requirements_schema(product_type)
         if not schema:

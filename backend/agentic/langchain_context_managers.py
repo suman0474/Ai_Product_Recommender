@@ -304,7 +304,7 @@ class LangChainLLMClientManager:
         """Initialize LLM client with fallback support"""
         with self._lock:
             try:
-                from llm_fallback import create_llm_with_fallback
+                from services.llm.fallback import create_llm_with_fallback
                 self.llm_client = create_llm_with_fallback(
                     model=self.model_name,
                     timeout=self.timeout_seconds,

@@ -264,7 +264,7 @@ class RankingTool:
             List of ranked products with detailed analysis
         """
         try:
-            from chaining import (
+            from core.chaining import (
                 setup_langchain_components,
                 invoke_ranking_chain,
                 to_dict_if_pydantic
@@ -334,7 +334,7 @@ class RankingTool:
             List of ranked products sorted by score
         """
         try:
-            from chaining import get_final_ranking, to_dict_if_pydantic
+            from core.chaining import get_final_ranking, to_dict_if_pydantic
 
             logger.info("[RankingTool] Using score-based ranking (fallback)")
 

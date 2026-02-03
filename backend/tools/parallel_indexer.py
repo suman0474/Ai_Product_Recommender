@@ -41,7 +41,7 @@ def index_database(
     logger.info(f"[ParallelIndexer] Starting database indexing...")
     
     try:
-        from azure_blob_utils import get_products_for_vendors
+        from services.azure.blob_utils import get_products_for_vendors
         from tools.metadata_filter import filter_by_hierarchy
         
         # Step 1: Apply metadata filter (Layer 1) - INSIDE the thread
@@ -193,7 +193,7 @@ def index_web_search(
     logger.info(f"[ParallelIndexer] Starting web search indexing...")
     
     try:
-        from llm_fallback import create_llm_with_fallback
+        from services.llm.fallback import create_llm_with_fallback
         from langchain_core.prompts import ChatPromptTemplate
         from langchain_core.output_parsers import JsonOutputParser
         

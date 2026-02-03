@@ -18,7 +18,7 @@ from enum import Enum
 
 # Import for LLM-based semantic classification
 try:
-    from llm_fallback import create_llm_with_fallback
+    from services.llm.fallback import create_llm_with_fallback
     from langchain_core.prompts import ChatPromptTemplate
     LLM_AVAILABLE = True
 except ImportError:

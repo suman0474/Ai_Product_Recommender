@@ -87,7 +87,7 @@ def process_vendor_in_parallel(vendor_info: Dict[str, Any], product_type: str) -
             store_vendor_data_tool,
             rank_pdfs_by_relevance
         )
-        from extraction_engine import aggregate_results
+        from core.extraction_engine import aggregate_results
 
         # Step 1: Search PDFs for this vendor
         logger.info(f"[PARALLEL] {vendor_name}: Searching PDFs...")
@@ -512,7 +512,7 @@ def store_vendor_data_node(state: PPIState) -> Dict[str, Any]:
     
     try:
         from .ppi_tools import store_vendor_data_tool
-        from extraction_engine import aggregate_results
+        from core.extraction_engine import aggregate_results
         
         vendor_data_stored = state.get("vendor_data_stored", [])
         

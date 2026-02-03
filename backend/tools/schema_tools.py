@@ -10,7 +10,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import JsonOutputParser
 from pydantic import BaseModel, Field
 import os
-from llm_fallback import create_llm_with_fallback
+from services.llm.fallback import create_llm_with_fallback
 from config import AgenticConfig
 from prompts_library import load_prompt
 logger = logging.getLogger(__name__)
@@ -56,7 +56,7 @@ VALIDATION_PROMPT = load_prompt("schema_validation_prompt")
 def get_schema_from_azure(product_type: str) -> Optional[Dict[str, Any]]:
     """Load schema from Azure Blob Storage"""
     try:
-        from azure_blob_utils import azure_blob_file_manager
+        from services.azure.blob_utils import azure_blob_file_manager
         schema = azure_blob_file_manager.get_schema_from_azure(product_type)
         return schema
     except Exception as e:

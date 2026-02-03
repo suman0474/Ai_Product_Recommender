@@ -6,7 +6,7 @@ Uses monitored locks for visibility into contention
 """
 import logging
 from typing import Dict, Any, Optional
-from llm_fallback import create_llm_with_fallback
+from services.llm.fallback import create_llm_with_fallback
 from .lock_monitor import get_monitored_lock
 
 logger = logging.getLogger(__name__)
@@ -41,7 +41,7 @@ class LLMManager:
             Phase 4: If the requested model's quota is exhausted, this will
             automatically try to return a fallback model instead.
         """
-        from llm_fallback import is_model_quota_exhausted
+        from services.llm.fallback import is_model_quota_exhausted
         from config import AgenticConfig
         
         original_model = model

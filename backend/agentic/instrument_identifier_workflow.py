@@ -25,7 +25,7 @@ from .standards_detector import detect_standards_indicators
 
 import os
 from dotenv import load_dotenv
-from llm_fallback import create_llm_with_fallback
+from services.llm.fallback import create_llm_with_fallback
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import JsonOutputParser
 

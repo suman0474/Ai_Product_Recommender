@@ -38,7 +38,7 @@ from .document_loader import (
 )
 from ..checkpointing import compile_with_checkpointing
 from tools.instrument_tools import identify_instruments_tool, identify_accessories_tool
-from llm_fallback import create_llm_with_fallback
+from services.llm.fallback import create_llm_with_fallback
 from .schema_field_extractor import extract_standards_from_value
 from .spec_output_normalizer import (
     normalize_full_item_specs,

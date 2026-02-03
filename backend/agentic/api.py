@@ -347,7 +347,7 @@ def validate_product_input():
 
     try:
         # Import from main.py's loading module (same as main.py uses)
-        from loading import load_requirements_schema
+        from core.loading import load_requirements_schema
 
         # Load initial generic schema for product type detection
         initial_schema = load_requirements_schema()
@@ -360,7 +360,7 @@ def validate_product_input():
                 raise Exception("Backend components not ready")
         except:
             # Fallback: use our own LLM if main components not available
-            from llm_fallback import create_llm_with_fallback
+            from services.llm.fallback import create_llm_with_fallback
             from langchain_core.output_parsers import JsonOutputParser
             from langchain_core.prompts import ChatPromptTemplate
             import os
@@ -486,7 +486,7 @@ def get_product_schema():
         # Helper functions moved to api_utils.py
 
         # Load schema (same as main.py)
-        from loading import load_requirements_schema, build_requirements_schema_from_web
+        from core.loading import load_requirements_schema, build_requirements_schema_from_web
 
         logger.info("[SCHEMA_GET] Loading schema...")
         specific_schema = load_requirements_schema(product_type)
@@ -2765,7 +2765,7 @@ def run_product_analysis():
         # This is the primary layer; frontend will handle fallback for missing
         # =====================================================================
         try:
-            from generic_image_utils import fetch_generic_product_image
+            from services.azure.image_utils import fetch_generic_product_image
             
             ranked_products = analysis_result.get('overallRanking', {}).get('rankedProducts', [])
             images_fetched = 0

@@ -142,7 +142,7 @@ def filter_vendors_by_product(product_types: List[str]) -> List[str]:
         List of vendor names
     """
     try:
-        from azure_blob_utils import get_vendors_for_product_type
+        from services.azure.blob_utils import get_vendors_for_product_type
         
         all_vendors = set()
         for product_type in product_types:
@@ -177,7 +177,7 @@ def filter_models_by_vendor(
         Dict mapping vendor -> list of model data
     """
     try:
-        from azure_blob_utils import get_products_for_vendors
+        from services.azure.blob_utils import get_products_for_vendors
         
         # Get products for all vendors
         products_data = get_products_for_vendors(vendors, product_type)
@@ -336,7 +336,7 @@ def extract_metadata_with_llm(
         Extracted metadata dict
     """
     try:
-        from llm_fallback import create_llm_with_fallback
+        from services.llm.fallback import create_llm_with_fallback
         from langchain_core.prompts import ChatPromptTemplate
         from langchain_core.output_parsers import JsonOutputParser
         

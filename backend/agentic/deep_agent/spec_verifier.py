@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 # Import LLM with fallback
 try:
-    from llm_fallback import create_llm_with_fallback
+    from services.llm.fallback import create_llm_with_fallback
 except ImportError:
     create_llm_with_fallback = None
 

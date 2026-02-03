@@ -458,7 +458,7 @@ def save_json(final_result: Dict[str, Any], file_path: str = None):
     """Save JSON to Azure Blob instead of local file"""
     print(f"7. Saving JSON output to Azure Blob...")
     
-    from azure_blob_utils import azure_blob_file_manager
+    from services.azure.blob_utils import azure_blob_file_manager
     
     vendor_name = final_result.get("vendor", "UnknownVendor").replace(" ", "_")
     product_type = final_result.get("product_type", "UnknownProduct").replace(" ", "_")

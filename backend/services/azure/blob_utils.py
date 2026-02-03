@@ -747,7 +747,7 @@ def get_vendors_for_product_type(product_type: str) -> List[str]:
     Get list of vendor names that have products for the specified product type.
     """
     try:
-        from standardization_utils import get_analysis_search_categories
+        from services.products.standardization import get_analysis_search_categories
         search_categories = get_analysis_search_categories(product_type)
 
         logger.info(f"[VENDOR_LOADING] Searching for vendors with product categories: {search_categories}")
@@ -919,7 +919,7 @@ def get_products_for_vendors(vendors: List[str], product_type: str = None) -> Di
                     
                 # If product_type specified, check using category expansion (same logic as vendor discovery)
                 if product_type:
-                    from standardization_utils import get_analysis_search_categories
+                    from services.products.standardization import get_analysis_search_categories
                     search_categories = get_analysis_search_categories(product_type)
                     
                     # Normalize blob product type

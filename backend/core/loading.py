@@ -24,7 +24,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-from extraction_engine import (
+from core.extraction_engine import (
     extract_data_from_pdf,
     send_to_language_model,
     aggregate_results,
@@ -34,11 +34,11 @@ from extraction_engine import (
 
 # Azure Blob imports (MongoDB API compatible)
 # Azure Blob imports
-from azure_blob_utils import azure_blob_file_manager
+from services.azure.blob_utils import azure_blob_file_manager
 
 # LLM import (LangChain Google Gemini with OpenAI fallback)
 from langchain_google_genai import ChatGoogleGenerativeAI
-from llm_fallback import create_llm_with_fallback
+from services.llm.fallback import create_llm_with_fallback
 
 # ----------------- Config -----------------
 SERPER_API_KEY = os.getenv("SERPER_API_KEY", "")
@@ -1328,7 +1328,7 @@ def load_products_runnable(vendors_base_path: str = None):
         
         # Get smart analysis search categories based on detection
         try:
-            from standardization_utils import get_analysis_search_categories
+            from services.products.standardization import get_analysis_search_categories
             search_categories = get_analysis_search_categories(detected_product_type)
         except ImportError:
             search_categories = [detected_product_type]
@@ -1440,7 +1440,7 @@ def load_pdf_content_runnable(documents_base_path: str = None):
         pdf_texts = {}
         
         # Get smart analysis search categories
-        from standardization_utils import get_analysis_search_categories
+        from services.products.standardization import get_analysis_search_categories
         search_categories = get_analysis_search_categories(product_type)
         
         logging.info(f"[PDF_LOADER] Loading PDFs from Azure for product type: {product_type}")

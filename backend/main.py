@@ -37,18 +37,18 @@ logging.getLogger("azure.identity").setLevel(logging.WARNING)
 from googleapiclient.discovery import build
 
 # --- NEW IMPORTS FOR AUTHENTICATION ---
-from auth_models import db, User, Log, StandardsDocument
-from auth_utils import hash_password, check_password
+from core.auth.auth_models import db, User, Log, StandardsDocument
+from core.auth.auth_utils import hash_password, check_password
 
 # --- Cosmos DB Project Management ---
-from cosmos_project_manager import cosmos_project_manager
+from services.azure.cosmos_manager import cosmos_project_manager
 from agentic.auth_decorators import login_required, admin_required
 
 # --- LLM CHAINING IMPORTS ---
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 
-from chaining import setup_langchain_components, create_analysis_chain
+from core.chaining import setup_langchain_components, create_analysis_chain
 # import prompts  # DEPRECATED: Replaced by direct prompts_library usage below
 from prompts_library import load_prompt, load_prompt_sections
 
@@ -85,7 +85,7 @@ FEEDBACK_COMMENT_PROMPT = "Thank you for your comment: {comment}"
 MANUFACTURER_DOMAIN_PROMPT = _PPI_PROMPTS["VENDOR_DISCOVERY"]
 
 
-from loading import load_requirements_schema, build_requirements_schema_from_web
+from core.loading import load_requirements_schema, build_requirements_schema_from_web
 from flask_session import Session
 
 # Import latest advanced specifications functionality
@@ -93,7 +93,7 @@ from advanced_parameters import discover_advanced_parameters
 
 # Import Azure Blob utilities (MongoDB API compatible)
 # Import Azure Blob utilities
-from azure_blob_utils import azure_blob_file_manager
+from services.azure.blob_utils import azure_blob_file_manager
 
 
 # MongoDB Project Management imports removed
@@ -489,7 +489,7 @@ try:
     logging.info("Resource Monitoring blueprint registered at /api/resources")
 except ImportError:
     logging.warning("Resource Monitoring API not available")
-from extraction_engine import (
+from core.extraction_engine import (
     extract_data_from_pdf,
     send_to_language_model,
     aggregate_results,
@@ -500,7 +500,7 @@ from extraction_engine import (
 )
 
 # Import standardization utilities
-from standardization_utils import (
+from services.products.standardization import (
     standardize_vendor_analysis_result,
     standardize_ranking_result,
     enhance_submodel_mapping,
@@ -1143,7 +1143,7 @@ def get_generic_image(product_type):
         product_type: Product type name (e.g., "Pressure Transmitter")
     """
     try:
-        from generic_image_utils import fetch_generic_product_image
+        from services.azure.image_utils import fetch_generic_product_image
         
         # Decode URL-encoded product type
         import urllib.parse
@@ -1203,7 +1203,7 @@ def get_generic_image_fast(product_type):
         }
     """
     try:
-        from generic_image_utils import fetch_generic_product_image_fast
+        from services.azure.image_utils import fetch_generic_product_image_fast
         import urllib.parse
         
         decoded_product_type = urllib.parse.unquote(product_type)
@@ -1265,7 +1265,7 @@ def regenerate_generic_image_endpoint(product_type):
         }
     """
     try:
-        from generic_image_utils import regenerate_generic_image
+        from services.azure.image_utils import regenerate_generic_image
         import urllib.parse
         
         decoded_product_type = urllib.parse.unquote(product_type)
@@ -1336,7 +1336,7 @@ def get_generic_images_batch():
         }
     """
     try:
-        from generic_image_utils import fetch_generic_images_batch
+        from services.azure.image_utils import fetch_generic_images_batch
         import time
         
         start_time = time.time()
@@ -3422,7 +3422,7 @@ def fetch_product_images_with_fallback_sync(vendor_name: str, product_name: str 
     
     # Step 0: Check MongoDB cache first (if model_family is provided)
     if vendor_name and model_family:
-        from azure_blob_utils import get_cached_image, cache_image
+        from services.azure.blob_utils import get_cached_image, cache_image
         
         cached_image = get_cached_image(vendor_name, model_family)
         if cached_image:
@@ -3455,7 +3455,7 @@ def fetch_product_images_with_fallback_sync(vendor_name: str, product_name: str 
         logging.info(f"Using Google CSE images for {vendor_name}")
         # Cache the top image if model_family is provided
         if vendor_name and model_family and len(images) > 0:
-            from azure_blob_utils import cache_image
+            from services.azure.blob_utils import cache_image
             cache_image(vendor_name, model_family, images[0])
         return images, "google_cse"
     
@@ -3470,7 +3470,7 @@ def fetch_product_images_with_fallback_sync(vendor_name: str, product_name: str 
         logging.info(f"Using SerpAPI images for {vendor_name}")
         # Cache the top image if model_family is provided
         if vendor_name and model_family and len(images) > 0:
-            from azure_blob_utils import cache_image
+            from services.azure.blob_utils import cache_image
             cache_image(vendor_name, model_family, images[0])
         return images, "serpapi"
     
@@ -3501,7 +3501,7 @@ def fetch_vendor_logo_sync(vendor_name: str, manufacturer_domains: list = None):
     
     # Step 0: Check Azure cache first
     try:
-        from azure_blob_utils import azure_blob_file_manager, download_image_from_url
+        from services.azure.blob_utils import azure_blob_file_manager, download_image_from_url
         
         logos_collection = azure_blob_file_manager.conn['collections'].get('vendor_logos')
         if logos_collection is not None:
@@ -3606,7 +3606,7 @@ def fetch_vendor_logo_sync(vendor_name: str, manufacturer_domains: list = None):
      # Step 2: Cache the logo in Azure Blob if found
     if logo_result:
         try:
-            from azure_blob_utils import azure_blob_file_manager, download_image_from_url
+            from services.azure.blob_utils import azure_blob_file_manager, download_image_from_url
             
             logo_url = logo_result.get('url')
             if logo_url and not logo_url.startswith('/api/images/'):  # Don't re-cache GridFS URLs
@@ -4662,7 +4662,7 @@ def api_validate():
             global current_operation_progress
             try:
                 # Set up progress tracking for web schema building
-                from loading import ProgressTracker
+                from core.loading import ProgressTracker
                 current_operation_progress = ProgressTracker(4, f"Building Schema for {detected_type}")
                 specific_schema = build_requirements_schema_from_web(detected_type)
             finally:
@@ -5262,7 +5262,7 @@ def api_get_field_description():
         # Used when no predefined default exists
         # =====================================================
         try:
-            from llm_fallback import create_llm_with_fallback
+            from services.llm.fallback import create_llm_with_fallback
             import os
             
             llm = create_llm_with_fallback(
@@ -5932,7 +5932,7 @@ def save_project():
         try:
             displayed_media = data.get('displayed_media_map', {}) if isinstance(data, dict) else {}
             if displayed_media:
-                from azure_blob_utils import azure_blob_file_manager
+                from services.azure.blob_utils import azure_blob_file_manager
                 # For each displayed media entry, fetch the URL and store bytes in GridFS
                 for key, entry in displayed_media.items():
                     try:
@@ -6103,7 +6103,7 @@ def serve_project_file(file_id):
     Serve a file stored in Azure Blob by its file ID (path).
     """
     try:
-        from azure_blob_utils import azure_blob_file_manager
+        from services.azure.blob_utils import azure_blob_file_manager
         
         # Try 'documents' collection corresponding to save_project uploads
         blob_path = f"{azure_blob_file_manager.base_path}/documents/{file_id}"

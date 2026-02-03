@@ -18,7 +18,7 @@ import os
 from typing import Dict, Any, List, Optional, Tuple
 from datetime import datetime
 
-from llm_fallback import create_llm_with_fallback
+from services.llm.fallback import create_llm_with_fallback
 
 logger = logging.getLogger(__name__)
 
@@ -244,7 +244,7 @@ class UnifiedEnrichmentEngine:
             return extracted
 
         try:
-            from extraction_engine import aggregate_results
+            from core.extraction_engine import aggregate_results
 
             aggregated = aggregate_results(vendor_data, self.product_type)
 

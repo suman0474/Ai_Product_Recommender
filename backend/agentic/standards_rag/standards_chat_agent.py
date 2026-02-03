@@ -15,7 +15,7 @@ from pydantic import BaseModel, field_validator
 import os
 # Import existing infrastructure
 from agentic.vector_store import get_vector_store
-from llm_fallback import create_llm_with_fallback
+from services.llm.fallback import create_llm_with_fallback
 from prompts_library import load_prompt_sections
 
 # Import consolidated JSON utilities

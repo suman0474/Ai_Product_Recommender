@@ -174,12 +174,12 @@ class VendorAnalysisTool:
 
         try:
             # Import required modules
-            from chaining import (
+            from core.chaining import (
                 setup_langchain_components,
                 invoke_vendor_chain,
                 to_dict_if_pydantic
             )
-            from azure_blob_utils import (
+            from services.azure.blob_utils import (
                 get_vendors_for_product_type,
                 get_products_for_vendors
             )
@@ -693,7 +693,7 @@ Analyze available products and return JSON with general recommendations based on
 
         for attempt in range(self.max_retries):
             try:
-                from chaining import invoke_vendor_chain
+                from core.chaining import invoke_vendor_chain
 
                 pdf_text = vendor_data.get("pdf_text", "")
                 products = vendor_data.get("products", [])
@@ -710,7 +710,7 @@ Analyze available products and return JSON with general recommendations based on
                 )
 
                 # Convert to dict if needed and parse for robust handling
-                from chaining import to_dict_if_pydantic, parse_vendor_analysis_response
+                from core.chaining import to_dict_if_pydantic, parse_vendor_analysis_response
                 result = to_dict_if_pydantic(result)
                 
                 # FIX: Handle malformed responses (missing vendor_matches wrapper)

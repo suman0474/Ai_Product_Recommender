@@ -374,7 +374,7 @@ def save_schema_node(state: PotentialProductIndexState) -> PotentialProductIndex
     try:
         if state.get("generated_schema"):
             # Save to Azure Blob Storage
-            from azure_blob_utils import azure_blob_file_manager
+            from services.azure.blob_utils import azure_blob_file_manager
             
             schema = state["generated_schema"]
             product_type = state["product_type"]

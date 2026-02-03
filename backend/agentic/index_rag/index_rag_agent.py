@@ -57,7 +57,7 @@ class IndexRAGAgent:
         Args:
             temperature: LLM temperature for generation
         """
-        from llm_fallback import create_llm_with_fallback
+        from services.llm.fallback import create_llm_with_fallback
         
         # Use Flash for fast classification and structuring
         self.llm = create_llm_with_fallback(

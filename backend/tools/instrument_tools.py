@@ -10,7 +10,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import JsonOutputParser
 from pydantic import BaseModel, Field
 import os
-from llm_fallback import create_llm_with_fallback
+from services.llm.fallback import create_llm_with_fallback
 
 from config import AgenticConfig
 from prompts_library import load_prompt, load_prompt_sections

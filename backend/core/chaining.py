@@ -6,8 +6,8 @@ import os
 import time
 import random
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from models import VendorAnalysis, OverallRanking, RequirementValidation
-from loading import load_requirements_schema, load_products_runnable, load_pdf_content_runnable
+from core.models import VendorAnalysis, OverallRanking, RequirementValidation
+from core.loading import load_requirements_schema, load_products_runnable, load_pdf_content_runnable
 
 # Create the actual load_products_data function from the runnable
 _load_products_runnable_instance = load_products_runnable()
@@ -17,14 +17,14 @@ load_products_data = _load_products_runnable_instance.func
 # Create load_pdf_content function similarly
 _load_pdf_content_runnable_instance = load_pdf_content_runnable()
 load_pdf_content = _load_pdf_content_runnable_instance.func
-from azure_blob_utils import get_available_vendors, get_vendors_for_product_type
+from services.azure.blob_utils import get_available_vendors, get_vendors_for_product_type
 
 # Import standardization utilities
-from standardization_utils import standardize_ranking_result
+from services.products.standardization import standardize_ranking_result
 
 # Import LLM fallback utilities
 from config import AgenticConfig
-from llm_fallback import FallbackLLMClient
+from services.llm.fallback import FallbackLLMClient
 
 # Import LangChain Runnable base class for compatibility
 from langchain_core.runnables import RunnableLambda
@@ -652,7 +652,7 @@ def load_vendors_and_filter(input_dict):
         logging.info(f"[CSV_FILTER] Restricting analysis to CSV vendors: {allowed_vendors}")
 
         from fuzzywuzzy import process
-        from standardization_utils import standardize_vendor_name
+        from services.products.standardization import standardize_vendor_name
 
         filtered_vendors = []
         logging.info(f"[CSV_FILTER] Starting fuzzy matching with {len(all_vendors)} DB vendors against {len(allowed_vendors)} CSV vendors")

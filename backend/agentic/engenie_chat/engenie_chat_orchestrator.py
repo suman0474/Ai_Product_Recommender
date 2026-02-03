@@ -160,7 +160,7 @@ def query_llm_fallback(query: str, session_id: str) -> Dict[str, Any]:
     on RESOURCE_EXHAUSTED errors.
     """
     try:
-        from llm_fallback import create_llm_with_fallback, invoke_with_retry_fallback
+        from services.llm.fallback import create_llm_with_fallback, invoke_with_retry_fallback
 
         llm = create_llm_with_fallback(
             model="gemini-2.5-flash",

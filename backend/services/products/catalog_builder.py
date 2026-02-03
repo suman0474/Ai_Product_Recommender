@@ -10,14 +10,14 @@ import time
 from typing import List, Dict, Any
 
 # Import all necessary functions from loading.py and test.py
-from loading import (
+from core.loading import (
     discover_top_vendors, 
     create_schema_from_vendor_data,
     _save_schema_to_specs,
     _search_vendor_pdfs,
     ProgressTracker
 )
-from extraction_engine import (
+from core.extraction_engine import (
     extract_data_from_pdf,
     send_to_language_model,
     aggregate_results,
@@ -194,7 +194,7 @@ def process_vendor_complete_pipeline(vendor_data, product_type):
                         
                         # Save PDF to MongoDB after successful processing
                         try:
-                            from azure_blob_utils import azure_blob_file_manager
+                            from services.azure.blob_utils import azure_blob_file_manager
                             # Structure: documents/{vendor}/{product_type}/{file}
                             safe_vendor = vendor_name.replace(" ", "_")
                             safe_product_type = product_type.replace(" ", "_")
@@ -243,7 +243,7 @@ def process_vendor_complete_pipeline(vendor_data, product_type):
                     }
                     
                     # Save to Azure Blob instead of local files
-                    from azure_blob_utils import azure_blob_file_manager
+                    from services.azure.blob_utils import azure_blob_file_manager
                     
                     safe_vendor = vendor_from_result.replace(" ", "_") or "UnknownVendor"
                     safe_ptype = (result.get("product_type") or product_type).replace(" ", "_") or "UnknownProduct"
@@ -440,7 +440,7 @@ def main():
 
     # Check which product types already have schemas in Azure Blob Storage
     from azure_blob_config import Collections
-    from azure_blob_utils import azure_blob_file_manager
+    from services.azure.blob_utils import azure_blob_file_manager
     
     logger.info("Checking for existing schemas in Azure Blob Storage...")
     

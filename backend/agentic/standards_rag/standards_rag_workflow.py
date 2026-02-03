@@ -14,7 +14,7 @@ from ..shared_agents import ResponseValidatorAgent
 from ..checkpointing import compile_with_checkpointing
 
 import os
-from llm_fallback import create_llm_with_fallback
+from services.llm.fallback import create_llm_with_fallback
 
 # Import new utility modules for Phase 1 & 2 gap fixes
 try:

@@ -13,7 +13,7 @@ import urllib.parse
 from azure.core.exceptions import ResourceNotFoundError
 from azure.storage.blob import ContentSettings, BlobClient
 
-from azure_blob_utils import azure_blob_file_manager
+from services.azure.blob_utils import azure_blob_file_manager
 
 class CosmosProjectManager:
     """

@@ -434,7 +434,7 @@ def fetch_vendor_product_images(
     cache_key = model_family or vendor_name
     
     try:
-        from azure_blob_utils import get_cached_image
+        from services.azure.blob_utils import get_cached_image
         
         cached_image = get_cached_image(vendor_name, cache_key)
         if cached_image:
@@ -507,7 +507,7 @@ def fetch_vendor_product_images(
     # STEP 4: Cache the verified best image to Azure Blob
     # =========================================================================
     try:
-        from azure_blob_utils import cache_image
+        from services.azure.blob_utils import cache_image
         
         cache_success = cache_image(
             vendor_name=vendor_name,
@@ -519,7 +519,7 @@ def fetch_vendor_product_images(
             logger.info(f"[VENDOR_IMAGES] ✓ Cached verified image to Azure Blob for {vendor_name} - {cache_key}")
             
             # Return the cached version with API URL
-            from azure_blob_utils import get_cached_image
+            from services.azure.blob_utils import get_cached_image
             cached_image = get_cached_image(vendor_name, cache_key)
             if cached_image:
                 return [{
