@@ -80,3 +80,43 @@ Return ONLY valid JSON:
     }},
     "next_steps": ["<suggested actions>"]
 }}
+
+
+=== PROMPT: FOLLOW_UP_RESOLUTION ===
+PURPOSE: Resolves follow-up queries using conversation context
+
+Resolve this follow-up question using the conversation context.
+
+PREVIOUS QUESTION: {last_query}
+PREVIOUS CONTEXT:
+- Product type: {product_type}
+- Vendors discussed: {vendors}
+
+CURRENT FOLLOW-UP: {current_query}
+
+INSTRUCTIONS:
+- If the user is asking about a different vendor/product in the same context, expand the query
+- Example: Previous "Honeywell pressure transmitters", Current "What about Emerson?" -> "Emerson pressure transmitters"
+- If it's not clearly a follow-up, return the original query unchanged
+- Return ONLY the resolved query text, nothing else
+
+RESOLVED QUERY:
+
+
+=== PROMPT: METADATA_EXTRACTION ===
+PURPOSE: Extract structured metadata from product search queries
+
+Extract structured metadata from this product search query.
+
+Query: {query}
+
+Return ONLY valid JSON:
+{{
+    "product_type": "<detected product type or null>",
+    "vendors": ["<list of mentioned vendor names>"],
+    "models": ["<list of mentioned model numbers>"],
+    "specifications": {{
+        "<spec_name>": "<spec_value>"
+    }},
+    "intent": "<search|compare|quote|info>"
+}}

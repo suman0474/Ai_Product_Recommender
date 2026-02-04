@@ -252,26 +252,51 @@ def invoke_requirements_chain(components, user_input):
     return response
 
 
-def invoke_vendor_chain(components, structured_requirements, products_json, pdf_content_json, format_instructions):
-    """Invoke vendor analysis chain"""
+def invoke_vendor_chain(
+    components, 
+    vendor: str,
+    structured_requirements, 
+    products_json, 
+    pdf_content_json, 
+    format_instructions,
+    applicable_standards=None,
+    standards_specs=None
+):
+    """
+    Invoke vendor analysis chain.
+    
+    Args:
+        components: LLM and other component references
+        vendor: Name of vendor being analyzed
+        structured_requirements: User requirements string
+        products_json: Product catalog data
+        pdf_content_json: PDF datasheet content
+        format_instructions: Output format instructions
+        applicable_standards: List of applicable engineering standards
+        standards_specs: Standards specifications from documents
+    
+    Returns:
+        Vendor analysis result dict
+    """
     from prompts import get_vendor_prompt
 
-    prompt = get_vendor_prompt(structured_requirements, products_json, pdf_content_json, format_instructions)
+    prompt = get_vendor_prompt(
+        vendor=vendor,
+        structured_requirements=structured_requirements,
+        products_json=products_json,
+        pdf_content_json=pdf_content_json,
+        format_instructions=format_instructions,
+        applicable_standards=applicable_standards,
+        standards_specs=standards_specs
+    )
     llm = components['llm_pro']
     response = llm.invoke(prompt)
 
     parsed_json = parse_json_response(response, pydantic_model=None)
     
     # Robustly handle malformed structure (e.g. missing 'vendor_matches' wrapper)
-    # Extract potential vendor name for logging
-    vendor_name = "unknown_vendor"
-    if isinstance(parsed_json, dict):
-        if 'vendor' in parsed_json:
-            vendor_name = parsed_json['vendor']
-        elif 'vendor_matches' in parsed_json and parsed_json['vendor_matches']:
-            vendor_name = parsed_json['vendor_matches'][0].get('vendor', "unknown_vendor")
-            
-    normalized_json = parse_vendor_analysis_response(parsed_json, vendor=vendor_name)
+    # Use the vendor parameter passed to this function
+    normalized_json = parse_vendor_analysis_response(parsed_json, vendor=vendor)
     
     # Try to validate with Pydantic, but fallback to normalized dict if it fails
     try:
@@ -590,7 +615,7 @@ def _run_parallel_vendor_analysis(
         logging.info("[VENDOR_ANALYSIS] END   vendor=%s error=%s", vendor, error)
         return vendor, result_dict, error
 
-    from agentic.context_managers import managed_thread_pool
+    from agentic.infrastructure.state.context.managers import managed_thread_pool
     with managed_thread_pool("chaining_ops", max_workers=max_workers) as pool:
         executor = pool._executor
         future_map = {}

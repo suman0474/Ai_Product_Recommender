@@ -9,6 +9,8 @@ from services.llm.standardization import standardize_with_llm
 from flask import jsonify
 import re
 
+logger = logging.getLogger(__name__)
+
 def standardize_vendor_analysis_result(analysis_result: Dict[str, Any]) -> Dict[str, Any]:
     """
     Standardize vendor analysis result using LLM
@@ -819,9 +821,40 @@ def get_analysis_search_categories(detected_product_type: str) -> list:
         
     elif "power" in product_lower and "supply" in product_lower:
         return ["power supply"]
-    
-    # Default fallback
-    return [detected_product_type]
+
+    # Handle pump-related searches
+    elif "pump" in product_lower or "displacement" in product_lower:
+        return ["pump", "positive displacement pump", "flow meter"]
+
+    elif "valve" in product_lower or "actuator" in product_lower:
+        return ["valve", "control valve", "actuator"]
+
+    elif "analyzer" in product_lower or "analytical" in product_lower:
+        return ["analyzer", "analytical instrument", "gas analyzer"]
+
+    # =========================================================================
+    # GENERIC PRODUCT TYPE HANDLING
+    # Handle generic/vague product types by searching across major categories
+    # This fixes the "Industrial Instrument" → 0 vendors found issue
+    # =========================================================================
+    elif any(generic in product_lower for generic in [
+        "industrial instrument", "process instrument", "chemical instrument",
+        "instrument", "general", "generic", "unknown"
+    ]):
+        # Search across all major instrumentation categories
+        logger.info(f"[VENDOR_SEARCH] Generic product type detected: '{detected_product_type}' - expanding search to all major categories")
+        return [
+            "pressure transmitter", "pressure sensor",
+            "temperature transmitter", "temperature sensor",
+            "flow meter",
+            "level transmitter", "level sensor",
+            "pump", "valve",
+            "analyzer"
+        ]
+
+    # Default fallback - return original type plus common related categories
+    logger.warning(f"[VENDOR_SEARCH] Unknown product type: '{detected_product_type}' - using original + common categories")
+    return [detected_product_type, "pressure transmitter", "flow meter"]
 
 def suggest_analysis_product_type(product_type: str) -> str:
     """
@@ -1014,7 +1047,7 @@ def standardized_jsonify(data, status_code=200):
     Enhanced jsonify function that applies standardization before converting to camelCase.
     Use this instead of jsonify() for responses containing vendor/product data.
     """
-    from agentic.api_utils import convert_keys_to_camel_case
+    from agentic.infrastructure.api.utils import convert_keys_to_camel_case
     try:
         # Apply standardization first (with timeout protection)
         standardized_data = apply_standardization_to_response(data)

@@ -53,10 +53,10 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import JsonOutputParser
 from docx import Document as DocxDocument
 
-from ..checkpointing import compile_with_checkpointing
-from ..vector_store import get_vector_store
+from agentic.checkpointing import compile_with_checkpointing
+from agentic.rag.vector_store import get_vector_store
 from services.llm.fallback import create_llm_with_fallback
-from ..llm_manager import get_cached_llm
+from agentic.utils.llm_manager import get_cached_llm
 from prompts_library import load_prompt, load_prompt_sections
 logger = logging.getLogger(__name__)
 
@@ -407,12 +407,12 @@ def load_standard_text(standard_type: str) -> Optional[str]:
     # Check cache first (OPTIMIZATION P0.3)
     with _DOCUMENT_CACHE_LOCK:
         if standard_type in _DOCUMENT_CACHE:
-            logger.info(f"[DOC_CACHE] ✓ Cache HIT: {standard_type}")
+            # logger.debug(f"[DOC_CACHE] ✓ Cache HIT: {standard_type}")
             return _DOCUMENT_CACHE[standard_type]
 
     # Cache miss - load from disk
-    logger.info(f"[DOC_CACHE] Cache MISS: Loading {standard_type}...")
-    logger.info(f"[DOC_CACHE] Using STANDARDS_DOCX_DIR: {STANDARDS_DOCX_DIR}")
+    # logger.debug(f"[DOC_CACHE] Cache MISS: Loading {standard_type}...")
+    # logger.debug(f"[DOC_CACHE] Using STANDARDS_DOCX_DIR: {STANDARDS_DOCX_DIR}")
     start_time = time.time()
 
     try:
@@ -430,7 +430,7 @@ def load_standard_text(standard_type: str) -> Optional[str]:
             return None
 
         # Load using python-docx
-        logger.info(f"Loading raw .docx file: {filename}")
+        logger.debug(f"Loading raw .docx file: {filename}")
         doc = DocxDocument(filepath)
 
         # Extract all paragraph text
@@ -454,10 +454,10 @@ def load_standard_text(standard_type: str) -> Optional[str]:
         full_text = "\n\n".join(paragraphs)
 
         load_time = time.time() - start_time
-        logger.info(
-            f"[DOC_CACHE] Loaded {len(paragraphs)} paragraphs/rows from {filename} "
-            f"in {load_time:.2f}s ({len(full_text)} chars)"
-        )
+        # logger.debug(
+        #     f"[DOC_CACHE] Loaded {len(paragraphs)} paragraphs/rows from {filename} "
+        #     f"in {load_time:.2f}s ({len(full_text)} chars)"
+        # )
 
         # Store in cache (OPTIMIZATION P0.3)
         with _DOCUMENT_CACHE_LOCK:
@@ -478,7 +478,7 @@ def prewarm_document_cache() -> Dict[str, Any]:
     Returns:
         dict: Statistics about cache warming
     """
-    logger.info("[DOC_CACHE] Pre-warming document cache...")
+    # logger.debug("[DOC_CACHE] Pre-warming document cache...")
     start_time = time.time()
 
     loaded = []
@@ -490,7 +490,7 @@ def prewarm_document_cache() -> Dict[str, Any]:
             result = load_standard_text(standard_type)
             if result:
                 loaded.append(standard_type)
-                logger.info(f"[DOC_CACHE] ✓ Pre-loaded: {standard_type}")
+                # logger.debug(f"[DOC_CACHE] ✓ Pre-loaded: {standard_type}")
             else:
                 failed.append(standard_type)
                 logger.warning(f"[DOC_CACHE] ✗ Failed: {standard_type}")
@@ -509,10 +509,10 @@ def prewarm_document_cache() -> Dict[str, Any]:
         "failed_domains": failed
     }
 
-    logger.info(
-        f"[DOC_CACHE] Cache pre-warming complete: "
-        f"{stats['success']}/{stats['total']} documents loaded in {stats['elapsed_seconds']}s"
-    )
+    # logger.debug(
+    #     f"[DOC_CACHE] Cache pre-warming complete: "
+    #     f"{stats['success']}/{stats['total']} documents loaded in {stats['elapsed_seconds']}s"
+    # )
 
     return stats
 

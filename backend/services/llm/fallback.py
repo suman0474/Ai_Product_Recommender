@@ -780,7 +780,7 @@ class FallbackLLMClient:
     Supports multi-key rotation for Google API keys.
     Similar to GeminiClient but with OpenAI fallback.
     
-    Note: Imports from agentic.context_managers are done lazily in methods
+    Note: Imports from agentic.infrastructure.state.context.managers are done lazily in methods
     to avoid circular import issues.
     """
 
@@ -817,7 +817,7 @@ class FallbackLLMClient:
     def __enter__(self):
         """Enable context manager usage"""
         # Lazy import to avoid circular dependency
-        from agentic.context_managers import LLMResourceManager
+        from agentic.infrastructure.state.context.managers import LLMResourceManager
         self._resource_manager = LLMResourceManager(
             "llm_client",
             f"fallback_{self.model_name}_{id(self)}",

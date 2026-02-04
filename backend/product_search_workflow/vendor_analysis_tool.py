@@ -248,7 +248,7 @@ class VendorAnalysisTool:
             try:
                 strategy_rag_invoked = True
                 # FIX: Import from correct path (strategy_rag subdirectory, not stub)
-                from agentic.strategy_rag.strategy_rag_enrichment import (
+                from agentic.workflows.strategy_rag.strategy_rag_enrichment import (
                     get_strategy_with_auto_fallback,
                     filter_vendors_by_strategy
                 )
@@ -437,6 +437,26 @@ class VendorAnalysisTool:
                 result['analysis_summary'] = "No vendor data available for analysis"
                 return result
 
+            # Step 5.5: Load applicable standards (if available)
+            logger.info("[VendorAnalysisTool] Step 5.5: Loading applicable engineering standards")
+            applicable_standards = []
+            standards_specs = "No specific standards requirements provided."
+            
+            try:
+                # TODO: Implement standards loading from user context/session
+                # For now, check if standards are provided in requirements
+                if structured_requirements and isinstance(structured_requirements, dict):
+                    if 'applicable_standards' in structured_requirements:
+                        applicable_standards = structured_requirements.get('applicable_standards', [])
+                    if 'standards_specifications' in structured_requirements:
+                        standards_specs = structured_requirements.get('standards_specifications', standards_specs)
+                
+                logger.info("[VendorAnalysisTool] Loaded %d applicable standards", len(applicable_standards))
+                if applicable_standards:
+                    logger.debug("[VendorAnalysisTool] Standards: %s", applicable_standards)
+            except Exception as standards_error:
+                logger.warning("[VendorAnalysisTool] Failed to load standards: %s (continuing without standards)", standards_error)
+
             # Step 6: Run parallel vendor analysis
             logger.info("[VendorAnalysisTool] Step 6: Running parallel vendor analysis")
             vendor_matches = []
@@ -457,7 +477,9 @@ class VendorAnalysisTool:
                         components,
                         requirements_str,
                         vendor,
-                        data
+                        data,
+                        applicable_standards,  # Pass standards
+                        standards_specs        # Pass standards specs
                     )
                     futures[future] = vendor
 
@@ -478,7 +500,15 @@ class VendorAnalysisTool:
                                     'matchScore': match_dict.get('match_score', match_dict.get('matchScore', 0)),
                                     'requirementsMatch': match_dict.get('requirements_match', match_dict.get('requirementsMatch', False)),
                                     'reasoning': match_dict.get('reasoning', ''),
-                                    'limitations': match_dict.get('limitations', '')
+                                    'limitations': match_dict.get('limitations', ''),
+                                    'productDescription': match_dict.get('product_description', match_dict.get('productDescription', '')),
+                                    # Standards compliance data
+                                    'standardsCompliance': match_dict.get('standards_compliance', match_dict.get('standardsCompliance', {})),
+                                    # Structured requirements matching
+                                    'matchedRequirements': match_dict.get('matched_requirements', match_dict.get('matchedRequirements', {})),
+                                    'unmatchedRequirements': match_dict.get('unmatched_requirements', match_dict.get('unmatchedRequirements', [])),
+                                    # Key strengths
+                                    'keyStrengths': match_dict.get('key_strengths', match_dict.get('keyStrengths', []))
                                 }
                                 vendor_matches.append(normalized_match)
                                 logger.info(f"[VendorAnalysisTool] DEBUG: Normalized match for {vendor}: {normalized_match}")
@@ -532,7 +562,7 @@ class VendorAnalysisTool:
             logger.info("[VendorAnalysisTool] Step 7: Enriching matches with vendor product images")
 
             try:
-                from agentic.vendor_image_utils import fetch_images_for_vendor_matches
+                from agentic.utils.vendor_images import fetch_images_for_vendor_matches
 
                 # Group matches by vendor and enrich with images
                 vendor_groups = {}
@@ -568,6 +598,42 @@ class VendorAnalysisTool:
             except Exception as image_enrichment_error:
                 logger.warning(f"[VendorAnalysisTool] Image enrichment failed: {image_enrichment_error}")
                 # Continue without images - analysis results are still valid
+
+            # ══════════════════════════════════════════════════════════════════════
+            # ENRICH MATCHES WITH VENDOR LOGOS (NEW)
+            # ══════════════════════════════════════════════════════════════════════
+            # Enrich vendor matches with explicit vendor logos (for UI display)
+            logger.info("[VendorAnalysisTool] Step 8: Enriching matches with vendor logos")
+            try:
+                from agentic.utils.vendor_images import enrich_matches_with_logos
+                
+                vendor_matches = enrich_matches_with_logos(
+                    matches=vendor_matches,
+                    max_workers=2
+                )
+                logger.info("[VendorAnalysisTool] Logo enrichment complete")
+            except ImportError:
+                logger.debug("[VendorAnalysisTool] Logo utilities not available - skipping logo enrichment")
+            except Exception as logo_enrichment_error:
+                 logger.warning(f"[VendorAnalysisTool] Logo enrichment failed: {logo_enrichment_error}")
+
+            # ══════════════════════════════════════════════════════════════════════
+            # ENRICH MATCHES WITH PRICING LINKS (NEW)
+            # ══════════════════════════════════════════════════════════════════════
+            # Search for pricing/buying links for each product
+            logger.info("[VendorAnalysisTool] Step 9: Enriching matches with pricing links")
+            try:
+                from agentic.utils.pricing_search import enrich_matches_with_pricing
+                
+                vendor_matches = enrich_matches_with_pricing(
+                    matches=vendor_matches,
+                    max_workers=5
+                )
+                logger.info("[VendorAnalysisTool] Pricing link enrichment complete")
+            except ImportError:
+                logger.debug("[VendorAnalysisTool] Pricing search utilities not available - skipping enrichment")
+            except Exception as pricing_error:
+                logger.warning(f"[VendorAnalysisTool] Pricing enrichment failed: {pricing_error}")
 
 
             # Generate enhanced summary with strategy info
@@ -682,9 +748,24 @@ Analyze available products and return JSON with general recommendations based on
         components: Dict[str, Any],
         requirements_str: str,
         vendor: str,
-        vendor_data: Dict[str, Any]
+        vendor_data: Dict[str, Any],
+        applicable_standards: Optional[List[str]] = None,
+        standards_specs: Optional[str] = None
     ) -> tuple:
-        """Analyze a single vendor."""
+        """
+        Analyze a single vendor.
+        
+        Args:
+            components: LLM and other component references
+            requirements_str: Formatted requirements string
+            vendor: Vendor name being analyzed
+            vendor_data: Vendor PDF and product data
+            applicable_standards: List of applicable engineering standards
+            standards_specs: Standards specifications from documents
+            
+        Returns:
+            Tuple of (result dict, error string or None)
+        """
         error = None
         result = None
         base_retry_delay = 15
@@ -703,10 +784,13 @@ Analyze available products and return JSON with general recommendations based on
 
                 result = invoke_vendor_chain(
                     components,
+                    vendor,                      # Pass vendor name
                     requirements_str,
                     products_payload,
                     pdf_payload,
-                    components['vendor_format_instructions']
+                    components['vendor_format_instructions'],
+                    applicable_standards=applicable_standards or [],
+                    standards_specs=standards_specs or "No specific standards requirements provided."
                 )
 
                 # Convert to dict if needed and parse for robust handling

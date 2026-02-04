@@ -1219,7 +1219,7 @@ def build_requirements_schema_from_web(product_type: str) -> Dict[str, Any]:
     # Use ThreadPoolExecutor for parallel vendor processing
     max_workers = min(len(vendors), 3)  # Limit to 3 concurrent searches for balanced performance
     
-    from agentic.context_managers import managed_thread_pool
+    from agentic.infrastructure.state.context.managers import managed_thread_pool
     with managed_thread_pool("loading_csv", max_workers=max_workers) as pool:
         executor = pool._executor
         # Submit all vendor search tasks

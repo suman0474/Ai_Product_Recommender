@@ -177,7 +177,7 @@ def _classify_rule_based(user_input: str) -> Optional[Dict[str, Any]]:
             # User wants to BUILD something, but might actually be asking about it
             # Use semantic classifier to double-check
             try:
-                from agentic.engenie_chat.engenie_chat_intent_agent import classify_query, DataSource
+                from agentic.workflows.engenie_chat.engenie_chat_intent_agent import classify_query, DataSource
                 data_source, confidence, _ = classify_query(query, use_semantic_llm=False)
                 # Standards and Strategy RAG indicate knowledge/info queries
                 rag_knowledge_sources = {DataSource.STANDARDS_RAG, DataSource.STRATEGY_RAG}

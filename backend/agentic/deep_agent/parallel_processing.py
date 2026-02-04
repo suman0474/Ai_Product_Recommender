@@ -12,14 +12,14 @@
 #
 # =============================================================================
 
-# Re-export from parallel_specs_enrichment
-from .parallel_specs_enrichment import (
+# Re-export from specifications.generation.parallel_enrichment
+from .specifications.generation.parallel_enrichment import (
     run_parallel_3_source_enrichment,
     deduplicate_and_merge_specifications,
 )
 
-# Re-export from optimized_parallel_agent
-from .optimized_parallel_agent import (
+# Re-export from processing.parallel.optimized_agent
+from .processing.parallel.optimized_agent import (
     run_optimized_parallel_enrichment,
     get_shared_llm,
     reset_shared_llm,
@@ -27,19 +27,19 @@ from .optimized_parallel_agent import (
     generate_llm_specs_with_shared_llm,
 )
 
-# Re-export from parallel_enrichment_engine
-from .parallel_enrichment_engine import (
+# Re-export from processing.parallel.enrichment_engine
+from .processing.parallel.enrichment_engine import (
     ParallelEnrichmentEngine,
 )
 
-# Re-export from parallel_schema_generator
-from .parallel_schema_generator import (
+# Re-export from schema.generation.parallel_generator
+from .schema.generation.parallel_generator import (
     ParallelSchemaGenerator,
     generate_schemas_parallel,
 )
 
-# Re-export from async_schema_generator
-from .async_schema_generator import (
+# Re-export from schema.generation.async_generator
+from .schema.generation.async_generator import (
     AsyncSchemaGenerator,
 )
 

@@ -44,7 +44,7 @@ except ImportError:
 # ║  Cache: product_type -> enrichment_result (thread-safe)                 ║
 # ║  [PHASE 1] Using BoundedCache with TTL/LRU to prevent memory leaks      ║
 # ╚═══════════════════════════════════════════════════════════════════════════╝
-from agentic.caching.bounded_cache_manager import get_or_create_cache, BoundedCache
+from agentic.infrastructure.caching.bounded_cache import get_or_create_cache, BoundedCache
 
 _session_enrichment_cache: BoundedCache = get_or_create_cache(
     name="session_enrichment",
@@ -334,7 +334,7 @@ class ValidationTool:
                             return schema
 
                     try:
-                        from agentic.standards_rag.standards_rag_enrichment import (
+                        from agentic.workflows.standards_rag.standards_rag_enrichment import (
                             enrich_identified_items_with_standards,
                             is_standards_related_question
                         )
@@ -397,7 +397,7 @@ class ValidationTool:
                         # ║  Fills gaps with IEC, ISO, ASME, NAMUR standards-referenced values      ║
                         # ╚══════════════════════════════════════════════════════════════════════════╝
                         try:
-                            from agentic.deep_agent.schema_field_extractor import extract_schema_field_values_from_standards
+                            from agentic.deep_agent.schema.generation.field_extractor import extract_schema_field_values_from_standards
 
                             logger.info("[FIX #4] Applying comprehensive standards defaults (target: 60+ fields)")
                             fields_before = schema.get("_standards_population", {}).get("fields_populated", 0)
@@ -429,7 +429,7 @@ class ValidationTool:
                         # ║  Provides comprehensive coverage with importance levels & typical values║
                         # ╚══════════════════════════════════════════════════════════════════════════╝
                         try:
-                            from agentic.deep_agent.specification_templates import (
+                            from agentic.deep_agent.specifications.templates.templates import (
                                 get_all_specs_for_product_type,
                                 export_template_as_dict
                             )
@@ -587,7 +587,7 @@ class ValidationTool:
                     logger.info("="*70)
 
                     try:
-                        from agentic.deep_agent_schema_populator import (
+                        from agentic.deep_agent.schema.populator_legacy import (
                             populate_schema_with_deep_agent,
                             predict_population_success
                         )
@@ -656,6 +656,28 @@ class ValidationTool:
             missing_fields = validation_result.get("missing_fields", [])
             is_valid = validation_result.get("is_valid", False)
 
+            # =================================================================
+            # FIX: PROPAGATE REFINED PRODUCT TYPE
+            # If validate_requirements_tool refined the product type (e.g.,
+            # "Industrial Instrument" -> "flow meter"), use the refined type
+            # for all subsequent operations including vendor analysis.
+            # =================================================================
+            refined_product_type = validation_result.get("product_type")
+            product_type_was_refined = validation_result.get("product_type_refined", False)
+
+            if refined_product_type and refined_product_type != product_type:
+                logger.info(
+                    "[ValidationTool] FIX: Product type REFINED by validation: '%s' -> '%s'",
+                    product_type, refined_product_type
+                )
+                product_type = refined_product_type
+                product_type_was_refined = True
+            elif product_type_was_refined:
+                logger.info(
+                    "[ValidationTool] Product type was refined (already using: %s)",
+                    product_type
+                )
+
             # Log validation results
             if is_valid:
                 logger.info("[ValidationTool] ✓ All mandatory fields provided")
@@ -667,7 +689,9 @@ class ValidationTool:
             # =================================================================
             result.update({
                 "success": True,
-                "product_type": product_type,
+                "product_type": product_type,  # This is now the refined product type if refinement occurred
+                "product_type_refined": product_type_was_refined,  # FIX: Flag indicating refinement
+                "original_product_type": extract_result.get("product_type"),  # FIX: Original detected type
                 "normalized_category": schema.get("normalized_category"),  # From standards_rag_enrichment
                 "schema": schema,
                 "provided_requirements": provided_requirements,
@@ -888,7 +912,7 @@ class ValidationTool:
             return self._validate_sequentially(product_types, session_id)
 
         try:
-            from agentic.deep_agent.parallel_schema_generator import ParallelSchemaGenerator
+            from agentic.deep_agent.schema.generation.parallel_generator import ParallelSchemaGenerator
 
             logger.info(f"[Phase 2] Starting parallel schema generation for {len(product_types)} products")
 
@@ -958,7 +982,7 @@ class ValidationTool:
             return schema
 
         try:
-            from agentic.standards_rag.parallel_standards_enrichment import ParallelStandardsEnrichment
+            from agentic.workflows.standards_rag.parallel_standards_enrichment import ParallelStandardsEnrichment
 
             logger.info(f"[Phase 2] Starting parallel enrichment for {product_type}")
 
@@ -1013,7 +1037,7 @@ class ValidationTool:
             return self.validate(product_type, session_id=session_id)
 
         try:
-            from agentic.schema_workflow import SchemaWorkflow
+            from agentic.workflows.schema.schema_workflow import SchemaWorkflow
 
             logger.info(f"[Phase 3] Starting async workflow for: {product_type}")
 
@@ -1064,7 +1088,7 @@ class ValidationTool:
             return self.validate_multiple_products_parallel(product_types, session_id)
 
         try:
-            from agentic.schema_workflow import SchemaWorkflow
+            from agentic.workflows.schema.schema_workflow import SchemaWorkflow
 
             logger.info(f"[Phase 3] Starting async batch workflow for {len(product_types)} products")
 

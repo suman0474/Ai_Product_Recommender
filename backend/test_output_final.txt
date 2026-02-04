@@ -1,0 +1,45 @@
+Google API Key Verification - 2026-02-04 14:10:16
+============================================================
+
+============================================================
+      GOOGLE API KEY VERIFICATION TEST
+============================================================
+Timestamp: 2026-02-04 14:10:16
+Test Method: LangChain ChatGoogleGenerativeAI
+
+============================================================
+Testing: GOOGLE_API_KEY
+Model: gemini-2.5-flash
+============================================================
+  [OK] Key found: AIzaSyABzE...v4pOJA
+  [..] Initializing gemini-2.5-flash...
+  [..] Sending test prompt...
+  [OK] Response: 'WORKING'
+  [SUCCESS] GOOGLE_API_KEY is FULLY FUNCTIONAL!
+
+============================================================
+Testing: GOOGLE_API_KEY1
+Model: gemini-2.5-flash
+============================================================
+  [OK] Key found: AIzaSyCrL8...0wR7zg
+  [..] Initializing gemini-2.5-flash...
+  [..] Sending test prompt...
+  [FAIL] Error: Error calling model 'gemini-2.5-flash' (INVALID_ARGUMENT): 400 INVALID_ARGUMENT. {'error': {'code': 400, 'message': 'API key expired. Please renew the API key.', 'status': 'INVALID_ARGUMENT', 'details
+  [REASON] API key has EXPIRED
+
+============================================================
+                    FINAL SUMMARY
+============================================================
+
+[OK] GOOGLE_API_KEY: WORKING
+[XX] GOOGLE_API_KEY1: EXPIRED - Needs replacement
+
+------------------------------------------------------------
+
+[PARTIAL] Only GOOGLE_API_KEY is working.
+[ACTION] Replace expired key: GOOGLE_API_KEY1
+
+============================================================
+                    TEST COMPLETE
+============================================================
+

@@ -133,7 +133,7 @@ def ingest_strategy_document(
         Ingestion result with document IDs
     """
     try:
-        from agentic.vector_store import get_vector_store
+        from agentic.rag.vector_store import get_vector_store
         
         vector_store = get_vector_store()
         
@@ -337,7 +337,7 @@ def ingest_csv_strategy(
     import csv
     
     try:
-        from agentic.vector_store import get_vector_store
+        from agentic.rag.vector_store import get_vector_store
         
         vector_store = get_vector_store()
         
@@ -433,7 +433,7 @@ def ingest_default_strategy():
 def get_strategy_store_stats() -> Dict[str, Any]:
     """Get statistics about the strategy vector store."""
     try:
-        from agentic.vector_store import get_vector_store
+        from agentic.rag.vector_store import get_vector_store
         
         vector_store = get_vector_store()
         stats = vector_store.get_collection_stats()

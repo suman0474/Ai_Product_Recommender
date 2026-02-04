@@ -13,10 +13,10 @@ from datetime import datetime
 from typing import List, Dict, Any
 import argparse
 
-from agentic.deep_agent.state_manager import InMemoryStateManager
-from agentic.deep_agent.task_queue import InMemoryTaskQueue
-from agentic.deep_agent.enrichment_worker import EnrichmentWorker
-from agentic.deep_agent.stateless_orchestrator import StatelessEnrichmentOrchestrator
+from agentic.deep_agent.memory.memory.state_manager import InMemoryStateManager
+from agentic.deep_agent.orchestration.task_queue import InMemoryTaskQueue
+from agentic.deep_agent.orchestration.enrichment_worker import EnrichmentWorker
+from agentic.deep_agent.orchestration.stateless_orchestrator import StatelessEnrichmentOrchestrator
 
 
 class BenchmarkMetrics:

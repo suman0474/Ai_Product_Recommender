@@ -14,16 +14,16 @@ from typing import Dict, Any, Optional
 from datetime import datetime
 from flask import Blueprint, request, jsonify, Response
 
-from .workflow import (
+from .workflows.workflow import (
     run_deep_agent_workflow,
     get_deep_agent_workflow,
     get_memory  # Memory manager function
 )
-from .memory import (
+from .memory.memory import (
     PRODUCT_TYPE_DOCUMENT_MAP,
     get_relevant_documents_for_product
 )
-from .document_loader import (
+from .documents.loader import (
     STANDARDS_DIRECTORY,
     analyze_user_input
 )

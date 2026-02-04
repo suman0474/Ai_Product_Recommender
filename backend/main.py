@@ -42,7 +42,7 @@ from core.auth.auth_utils import hash_password, check_password
 
 # --- Cosmos DB Project Management ---
 from services.azure.cosmos_manager import cosmos_project_manager
-from agentic.auth_decorators import login_required, admin_required
+from agentic.infrastructure.utils.auth_decorators import login_required, admin_required
 
 # --- LLM CHAINING IMPORTS ---
 from langchain_core.prompts import ChatPromptTemplate
@@ -158,7 +158,7 @@ db.init_app(app)
 def upload_user_standards_document():
     try:
         from file_extraction_utils import extract_text_from_file
-        from agentic.vector_store import get_vector_store
+        from agentic.rag.vector_store import get_vector_store
 
         if 'file' not in request.files:
             return jsonify({"success": False, "error": "No file provided"}), 400
@@ -318,7 +318,7 @@ def list_user_standards_documents():
 @login_required
 def delete_user_standards_document(document_id: str):
     try:
-        from agentic.vector_store import get_vector_store
+        from agentic.rag.vector_store import get_vector_store
 
         user_id = session.get('user_id')
         if not user_id:
@@ -352,7 +352,7 @@ def delete_user_standards_document(document_id: str):
 @login_required
 def reindex_user_standards_document(document_id: str):
     try:
-        from agentic.vector_store import get_vector_store
+        from agentic.rag.vector_store import get_vector_store
         from file_extraction_utils import extract_text_from_file
 
         user_id = session.get('user_id')
@@ -444,7 +444,7 @@ limiter = init_limiter(app)
 logging.info("Rate limiting initialized successfully")
 
 # --- Import and Register Agentic Workflow Blueprint ---
-from agentic.api import agentic_bp
+from agentic.infrastructure.api.main_api import agentic_bp
 app.register_blueprint(agentic_bp)
 logging.info("Agentic workflow blueprint registered at /api/agentic")
 
@@ -454,7 +454,7 @@ app.register_blueprint(deep_agent_bp, url_prefix='/api')
 logging.info("Deep Agent blueprint registered at /api/deep-agent")
 
 # --- Import and Register EnGenie Chat API Blueprint ---
-from agentic.engenie_chat.engenie_chat_api import engenie_chat_bp
+from agentic.workflows.engenie_chat.engenie_chat_api import engenie_chat_bp
 app.register_blueprint(engenie_chat_bp)
 logging.info("EnGenie Chat API blueprint registered at /api/engenie-chat")
 
@@ -465,13 +465,13 @@ logging.info("Tools API blueprint registered at /api/tools")
 
 
 # --- Import and Register Session API Blueprints ---
-from agentic.session_api import register_session_blueprints
+from agentic.infrastructure.api.session import register_session_blueprints
 register_session_blueprints(app)
 logging.info("Session and Instance blueprints registered")
 
 
 # LangChain and Utility Imports
-from agentic.api_utils import (
+from agentic.infrastructure.api.utils import (
     convert_keys_to_camel_case, 
     clean_empty_values, 
     map_provided_to_schema,
@@ -484,7 +484,7 @@ from agentic.api_utils import (
 # =========================================================================
 # --- Import and Register Resource Monitoring Blueprint ---
 try:
-    from agentic.resource_monitoring_api import resource_bp
+    from agentic.infrastructure.api.monitoring import resource_bp
     app.register_blueprint(resource_bp)
     logging.info("Resource Monitoring blueprint registered at /api/resources")
 except ImportError:
@@ -691,7 +691,7 @@ def api_intent():
     # - LLM-based intent classification
     # - Workflow routing decisions
     # =========================================================================
-    from agentic.intent_classification_routing_agent import (
+    from agentic.agents.routing.intent_classifier import (
         IntentClassificationRoutingAgent,
         WorkflowTarget,
         get_workflow_memory
@@ -4736,6 +4736,7 @@ def api_validate():
 
 
 @app.route("/api/new-search", methods=["POST"])
+@app.route("/new-search", methods=["POST"])  # Alias for frontend compatibility
 @login_required
 def api_new_search():
     """Initialize a new search session, clearing any previous state"""
@@ -5234,7 +5235,7 @@ def api_get_field_description():
         # Uses comprehensive standards specifications from schema_field_extractor
         # =====================================================
         try:
-            from agentic.deep_agent.schema_field_extractor import get_default_value_for_field
+            from agentic.deep_agent.schema.generation.field_extractor import get_default_value_for_field
             
             default_value = get_default_value_for_field(product_type, field_name)
             
@@ -5373,7 +5374,7 @@ def api_get_all_field_descriptions():
         # Import template specifications for actual descriptions
         template_descriptions = {}
         try:
-            from agentic.deep_agent.specification_templates import get_all_specs_for_product_type
+            from agentic.deep_agent.specifications.templates.templates import get_all_specs_for_product_type
             template_specs = get_all_specs_for_product_type(product_type)
             if template_specs:
                 for spec_key, spec_def in template_specs.items():
@@ -5406,8 +5407,16 @@ def api_get_all_field_descriptions():
             source = "not_found"
             
             # Check template descriptions by field name
+            # Convert CamelCase to snake_case for template matching
+            import re
+            snake_case_name = re.sub(r'(?<!^)(?=[A-Z])', '_', field_name).lower()
+            
             if field_name in template_descriptions:
                 description = template_descriptions[field_name]
+                source = "template_specifications"
+                fields_populated += 1
+            elif snake_case_name in template_descriptions:
+                description = template_descriptions[snake_case_name]
                 source = "template_specifications"
                 fields_populated += 1
             elif field_path in template_descriptions:
@@ -5643,6 +5652,7 @@ def get_submodel_mapping():
         return jsonify({"error": "Failed to get submodel mapping", "mapping": {}}), 500
 
 @app.route("/api/admin/approve_user", methods=["POST"])
+@app.route("/admin/approve_user", methods=["POST"])  # Alias for frontend compatibility
 @login_required
 def approve_user():
     admin_user = db.session.get(User, session['user_id'])
@@ -5666,6 +5676,7 @@ def approve_user():
     return jsonify({"message": f"User {user.username} status updated to {user.status}."}), 200
 
 @app.route("/api/admin/pending_users", methods=["GET"])
+@app.route("/admin/pending_users", methods=["GET"])  # Alias for frontend compatibility
 @login_required
 def pending_users():
     admin_user = db.session.get(User, session['user_id'])
@@ -6185,7 +6196,7 @@ create_db()
 # Prevents unbounded memory growth from checkpoint accumulation
 checkpoint_manager = None
 try:
-    from agentic.checkpointing import CheckpointManager, start_auto_checkpoint_cleanup
+    from agentic.infrastructure.state.checkpointing.local import CheckpointManager, start_auto_checkpoint_cleanup
 
     # Create checkpoint manager with Azure Blob Storage (production-ready)
     # Falls back to memory if Azure credentials not configured
@@ -6212,7 +6223,7 @@ except Exception as e:
 # Prevents memory leaks from accumulated session files
 session_cleanup_manager = None
 try:
-    from agentic.session_cleanup_manager import SessionCleanupManager
+    from agentic.infrastructure.state.session.cleanup import SessionCleanupManager
 
     session_dir = app.config.get("SESSION_FILE_DIR", "/tmp/flask_session")
     session_cleanup_manager = SessionCleanupManager(
@@ -6228,7 +6239,7 @@ except Exception as e:
 # Initialize bounded workflow state management (Phase 4 improvement)
 # Prevents OOM crashes from unbounded state accumulation
 try:
-    from agentic.workflow_state_manager import stop_workflow_state_manager
+    from agentic.infrastructure.state.workflow_state import stop_workflow_state_manager
     logging.info("Workflow state manager initialized with bounded memory and auto-cleanup")
 except Exception as e:
     logging.warning(f"Failed to initialize workflow state manager: {e}")
@@ -6262,14 +6273,18 @@ atexit.register(shutdown_cleanup)
 # Pre-warm standards document cache (Task #6 - Performance Optimization)
 # Loads all standard documents into memory at startup to eliminate cache-miss delays
 try:
-    from agentic.deep_agent.standards_deep_agent import prewarm_document_cache
+    from agentic.deep_agent.standards.deep_agent import prewarm_document_cache
 
-    logging.info("Pre-warming standards document cache...")
-    cache_stats = prewarm_document_cache()
-    logging.info(
-        f"Standards cache pre-warmed: {cache_stats['success']}/{cache_stats['total']} "
-        f"documents loaded in {cache_stats['elapsed_seconds']}s"
-    )
+    logging.debug("Starting background pre-warming of standards document cache...")
+    import threading
+    def _background_prewarm():
+        try:
+            prewarm_document_cache()
+        except Exception as e:
+            logging.warning(f"Failed to pre-warm standards document cache: {e}")
+            logging.warning("Standards will be loaded on-demand (slower first request)")
+            
+    threading.Thread(target=_background_prewarm, daemon=True).start()
 except Exception as e:
     logging.warning(f"Failed to pre-warm standards document cache: {e}")
     logging.warning("Standards will be loaded on-demand (slower first request)")

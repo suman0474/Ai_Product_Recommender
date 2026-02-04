@@ -294,11 +294,18 @@ const Project = () => {
     const [regeneratingImages, setRegeneratingImages] = useState<Set<string>>(new Set());
     const [loadingImages, setLoadingImages] = useState<Set<string>>(new Set());
 
-    // Regenerate a single image - called when user clicks retry button
+    // Regenerate a single image - called automatically when image is not found
     const regenerateImage = async (productName: string) => {
         if (regeneratingImages.has(productName)) return; // Already regenerating
 
         setRegeneratingImages(prev => new Set(prev).add(productName));
+
+        // Remove from failed images while regenerating
+        setFailedImages(prev => {
+            const next = new Set(prev);
+            next.delete(productName);
+            return next;
+        });
 
         try {
             const response = await fetch(`${BASE_URL}/api/generic_image/regenerate/${encodeURIComponent(productName)}`, {
@@ -314,7 +321,7 @@ const Project = () => {
                     ...prev,
                     [productName]: data.image.url
                 }));
-                // Remove from failed set
+                // Remove from failed set (already done at start but good to ensure)
                 setFailedImages(prev => {
                     const next = new Set(prev);
                     next.delete(productName);
@@ -324,11 +331,14 @@ const Project = () => {
                 // Rate limited - show wait time
                 const waitSeconds = data.wait_seconds || 30;
                 console.warn(`Rate limited. Please wait ${waitSeconds} seconds before retrying.`);
+                setFailedImages(prev => new Set(prev).add(productName));
             } else {
                 console.error('Image regeneration failed:', data.error || 'Unknown error');
+                setFailedImages(prev => new Set(prev).add(productName));
             }
         } catch (error) {
             console.error('Error regenerating image:', error);
+            setFailedImages(prev => new Set(prev).add(productName));
         } finally {
             setRegeneratingImages(prev => {
                 const next = new Set(prev);
@@ -539,9 +549,9 @@ const Project = () => {
                         console.warn(`[SEQUENTIAL_LOAD] ✗ No image data for ${productType}`);
                     }
                 } else if (response.status === 404) {
-                    // Image not found - mark as failed so user can retry
-                    setFailedImages(prev => new Set(prev).add(productType));
-                    console.warn(`[SEQUENTIAL_LOAD] ✗ Not found: ${productType} (may need LLM generation later)`);
+                    // Image not found - automatically trigger regeneration
+                    console.log(`[SEQUENTIAL_LOAD] Not found: ${productType}. Triggering automatic regeneration...`);
+                    regenerateImage(productType);
                 } else {
                     // Other HTTP errors - mark as failed
                     setFailedImages(prev => new Set(prev).add(productType));
@@ -2535,33 +2545,14 @@ const Project = () => {
                                                                             }}
                                                                         />
                                                                     </div>
-                                                                ) : loadingImages.has(instrument.productName) ? (
+                                                                ) : (loadingImages.has(instrument.productName) || regeneratingImages.has(instrument.productName)) ? (
                                                                     <div className="flex flex-col items-center justify-center my-4 py-6 rounded-lg bg-muted/20">
                                                                         <Loader2 className="h-8 w-8 animate-spin text-muted-foreground mb-2" />
-                                                                        <p className="text-xs text-muted-foreground">Loading image...</p>
+                                                                        <p className="text-xs text-muted-foreground">Generating image...</p>
                                                                     </div>
                                                                 ) : failedImages.has(instrument.productName) && (
                                                                     <div className="flex flex-col items-center justify-center my-4 py-6 rounded-lg bg-muted/30 border border-dashed border-muted-foreground/30">
-                                                                        <p className="text-sm text-muted-foreground mb-2">Image not available</p>
-                                                                        <Button
-                                                                            variant="outline"
-                                                                            size="sm"
-                                                                            disabled={regeneratingImages.has(instrument.productName)}
-                                                                            onClick={() => regenerateImage(instrument.productName)}
-                                                                            className="text-xs"
-                                                                        >
-                                                                            {regeneratingImages.has(instrument.productName) ? (
-                                                                                <>
-                                                                                    <Loader2 className="h-3 w-3 mr-1 animate-spin" />
-                                                                                    Generating...
-                                                                                </>
-                                                                            ) : (
-                                                                                <>
-                                                                                    <RefreshCw className="h-3 w-3 mr-1" />
-                                                                                    Generate Image
-                                                                                </>
-                                                                            )}
-                                                                        </Button>
+                                                                        <p className="text-sm text-muted-foreground">Image not available</p>
                                                                     </div>
                                                                 )}
 
@@ -2693,33 +2684,14 @@ const Project = () => {
                                                                             }}
                                                                         />
                                                                     </div>
-                                                                ) : loadingImages.has(accessory.accessoryName) ? (
+                                                                ) : (loadingImages.has(accessory.accessoryName) || regeneratingImages.has(accessory.accessoryName)) ? (
                                                                     <div className="flex flex-col items-center justify-center my-4 py-6 rounded-lg bg-muted/20">
                                                                         <Loader2 className="h-8 w-8 animate-spin text-muted-foreground mb-2" />
-                                                                        <p className="text-xs text-muted-foreground">Loading image...</p>
+                                                                        <p className="text-xs text-muted-foreground">Generating image...</p>
                                                                     </div>
                                                                 ) : failedImages.has(accessory.accessoryName) && (
                                                                     <div className="flex flex-col items-center justify-center my-4 py-6 rounded-lg bg-muted/30 border border-dashed border-muted-foreground/30">
-                                                                        <p className="text-sm text-muted-foreground mb-2">Image not available</p>
-                                                                        <Button
-                                                                            variant="outline"
-                                                                            size="sm"
-                                                                            disabled={regeneratingImages.has(accessory.accessoryName)}
-                                                                            onClick={() => regenerateImage(accessory.accessoryName)}
-                                                                            className="text-xs"
-                                                                        >
-                                                                            {regeneratingImages.has(accessory.accessoryName) ? (
-                                                                                <>
-                                                                                    <Loader2 className="h-3 w-3 mr-1 animate-spin" />
-                                                                                    Generating...
-                                                                                </>
-                                                                            ) : (
-                                                                                <>
-                                                                                    <RefreshCw className="h-3 w-3 mr-1" />
-                                                                                    Generate Image
-                                                                                </>
-                                                                            )}
-                                                                        </Button>
+                                                                        <p className="text-sm text-muted-foreground">Image not available</p>
                                                                     </div>
                                                                 )}
 

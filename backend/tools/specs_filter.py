@@ -209,7 +209,7 @@ def apply_strategy_filter(
     
     try:
         # FIX: Import from correct path (strategy_rag subdirectory, not stub)
-        from agentic.strategy_rag.strategy_rag_enrichment import (
+        from agentic.workflows.strategy_rag.strategy_rag_enrichment import (
             get_strategy_with_auto_fallback,
             filter_vendors_by_strategy
         )

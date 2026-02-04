@@ -1,0 +1,11 @@
+=== SIMPLE_STANDARDIZATION ===
+Standardize these industrial product names using proper industry terminology:
+
+Vendor: {vendor}
+Product Type: {product_type}
+
+Return standardized names in JSON format:
+{{
+    "vendor": "[standardized vendor name]",
+    "product_type": "[standardized product type]"
+}}

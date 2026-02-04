@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 # ============================================================================
 
 # [PHASE 1] Using BoundedCache with TTL/LRU - max size is now ENFORCED
-from agentic.caching.bounded_cache_manager import get_or_create_cache, BoundedCache
+from agentic.infrastructure.caching.bounded_cache import get_or_create_cache, BoundedCache
 
 _standards_results_cache: BoundedCache = get_or_create_cache(
     name="standards_results",
@@ -138,7 +138,7 @@ def _call_standards_rag(question: str, top_k: int = 5) -> Dict[str, Any]:
         Standards RAG response with answer, citations, confidence
     """
     try:
-        from agentic.standards_rag import run_standards_rag_workflow
+        from agentic.workflows.standards_rag.standards_rag_workflow import run_standards_rag_workflow
 
         result = run_standards_rag_workflow(
             question=question,
@@ -193,7 +193,7 @@ def _fast_vector_search(query: str, top_k: int = 5) -> Dict[str, Any]:
         Dictionary with documents and extracted standards info (no LLM processing)
     """
     try:
-        from agentic.vector_store import get_vector_store
+        from agentic.rag.vector_store import get_vector_store
         
         store = get_vector_store()
         result = store.search(
@@ -399,7 +399,7 @@ def get_applicable_standards(
     
     # Always use LLM-powered RAG (fast_mode is deprecated)
     try:
-        from agentic.standards_rag import run_standards_rag_workflow
+        from agentic.workflows.standards_rag.standards_rag_workflow import run_standards_rag_workflow
         
         # Build comprehensive standards question
         question = f"""What are the applicable engineering standards (ISO, IEC, API, ANSI, ISA),
@@ -481,7 +481,7 @@ def _get_applicable_standards_fallback(
     logger.info(f"[StandardsEnrichment-Fallback] Vector search for: {product_type}")
     
     try:
-        from agentic.vector_store import get_vector_store
+        from agentic.rag.vector_store import get_vector_store
         
         store = get_vector_store()
         query = f"{product_type} standards specifications certifications requirements IEC ISO API SIL ATEX"

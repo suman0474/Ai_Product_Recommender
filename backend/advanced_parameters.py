@@ -18,6 +18,7 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from azure_blob_config import get_azure_blob_connection
 from config import AgenticConfig
 from services.llm.fallback import create_llm_with_fallback
+from prompts_library import load_prompt_sections
 
 # MONGO_TTL_DAYS removed - advanced parameters persist indefinitely
 IN_MEMORY_CACHE_TTL_MINUTES = 10
@@ -178,12 +179,8 @@ class AdvancedParametersDiscovery:
 
     def get_generic_specifications(self, product_type: str) -> List[str]:
         """Get generic advanced specifications with series numbers for product type."""
-        prompt = ChatPromptTemplate.from_template("""
-List 15 latest advanced specifications for {product_type} (past 6 months).
-Focus on: IoT, Industry 4.0, AI, protocols, cybersecurity, cloud, series numbers, model specifications.
-Include specific series numbers and generation information.
-Return JSON array in snake_case: ["series_5000_hart_protocol", "gen3_wireless_diagnostics", "model_pro_cybersecurity"]
-""")
+        _adv_params_prompts = load_prompt_sections("advanced_parameters_prompts")
+        prompt = ChatPromptTemplate.from_template(_adv_params_prompts["GENERIC_SPECIFICATIONS"])
         try:
             response = (prompt | self.llm | StrOutputParser()).invoke({"product_type": product_type})
             params = json.loads(response.strip().replace('```json', '').replace('```', ''))
@@ -436,45 +433,8 @@ def discover_advanced_parameters(product_type: str) -> Dict[str, Any]:
 
         # Request only human-readable parameter names from the LLM.
         # We'll deterministically create a snake_case key from each returned name.
-        prompt = ChatPromptTemplate.from_template(
-            """
-You are an expert in industrial instrumentation and vendor product catalogs.
-
-Task:
-- Provide up to 5 human-friendly names of the latest advanced parameters or features for {product_type} from the past 6 months.
-- Include series numbers and model/generation hints inside the human-readable name where applicable (for example: "Series 5000 HART Diagnostics").
-- DO NOT return keys or code-friendly names — return only an array of human-readable strings.
-
-Product type: {product_type}
-Existing schema parameter keys (snake_case): {existing_parameters}
-
-**CRITICAL - Avoid Duplicates:**
-Do NOT suggest parameters that are semantically similar to existing ones.
-
-Examples of what to AVOID:
-- If "output_signal" exists, DON'T suggest "signal_output", "output_type", or "signal_type"
-- If "pressure_range" exists, DON'T suggest "range_pressure", "pressure_limits", or "measurement_range"
-- If "communication_protocol" exists, DON'T suggest "protocol_communication" or "comm_protocol"
-- If "temperature_range" exists, DON'T suggest "temp_range" or "operating_temperature"
-
-Examples of what IS acceptable (truly new parameters):
-- If "output_signal" exists, you CAN suggest "wireless_diagnostics" (different concept)
-- If "pressure_range" exists, you CAN suggest "predictive_maintenance" (different concept)
-
-Return strict JSON only in this exact format and nothing else:
-{{
-  "parameters": [
-    "Human Readable Parameter Name 1",
-    "Another Parameter Name (Series X)",
-  ]
-}}
-
-Rules:
-- Do NOT include any parameter whose snake_case key (derived from the human name) would match an existing schema key.
-- Prefer no more than 5 parameters.
-- Do NOT include any extra commentary or markdown.
-"""
-        )
+        _adv_params_prompts = load_prompt_sections("advanced_parameters_prompts")
+        prompt = ChatPromptTemplate.from_template(_adv_params_prompts["PARAMETER_DISCOVERY"])
 
         chain = prompt | llm | StrOutputParser()
         raw_response = chain.invoke({"product_type": product_type, "existing_parameters": json.dumps(existing_list)})

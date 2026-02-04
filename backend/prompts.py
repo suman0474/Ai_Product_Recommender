@@ -14,6 +14,7 @@ This file will be removed in a future version.
 import warnings
 from prompts_library import load_prompt, load_prompt_sections
 from langchain_core.prompts import ChatPromptTemplate
+from typing import Optional, List
 
 # Show deprecation warning when this module is imported
 warnings.warn(
@@ -329,22 +330,50 @@ def get_requirements_prompt(user_input: str) -> str:
 
 
 def get_vendor_prompt(
+    vendor: str,
     structured_requirements: str,
     products_json: str,
     pdf_content_json: str,
-    format_instructions: str
+    format_instructions: str,
+    applicable_standards: Optional[List[str]] = None,
+    standards_specs: Optional[str] = None
 ) -> str:
     """
     Build vendor analysis prompt.
     Used by chaining.py invoke_vendor_chain().
+    
+    Args:
+        vendor: Name of the vendor being analyzed
+        structured_requirements: Formatted user requirements string
+        products_json: JSON string of product catalog data
+        pdf_content_json: JSON string of PDF datasheet content
+        format_instructions: Output format instructions
+        applicable_standards: List of applicable engineering standards
+        standards_specs: Standards specifications from user's standards documents
+    
+    Returns:
+        Formatted prompt string ready for LLM
     """
-    template = load_prompt("analysis_tool_vendor_analysis_prompt") # Still individual
-    # Template uses: {vendor}, {requirements}, {pdf_content}, {product_data}
+    template = load_prompt("analysis_tool_vendor_analysis_prompt")
+    
+    # Handle optional standards parameters
+    if applicable_standards is None:
+        applicable_standards = []
+    if standards_specs is None:
+        standards_specs = "No specific standards requirements provided."
+    
+    # Format standards list for prompt
+    standards_list = "\n".join(f"- {std}" for std in applicable_standards) if applicable_standards else "No specific standards specified."
+    
+    # Template uses the exact parameter names from the prompt template
     return template.format(
-        vendor="",  # Will be filled by caller or extracted from context
-        requirements=structured_requirements,
-        pdf_content=pdf_content_json,
-        product_data=products_json
+        vendor=vendor,
+        structured_requirements=structured_requirements,
+        applicable_standards=standards_list,
+        standards_specs=standards_specs,
+        pdf_content_json=pdf_content_json,
+        products_json=products_json,
+        format_instructions=format_instructions
     )
 
 

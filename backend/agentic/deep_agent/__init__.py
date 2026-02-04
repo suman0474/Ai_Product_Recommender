@@ -22,7 +22,7 @@ from .memory import (
     get_relevant_documents_for_product,
 )
 
-from .document_loader import (
+from .documents.loader import (
     STANDARDS_DIRECTORY,
     load_all_standards_documents,
     populate_memory_with_documents,
@@ -36,7 +36,7 @@ from .document_loader import (
     extract_guidelines,
 )
 
-from .workflow import (
+from .workflows import (
     DeepAgentState,
     create_deep_agent_state,
     run_deep_agent_workflow,
@@ -46,7 +46,7 @@ from .workflow import (
     clear_memory,
 )
 
-from .integration import (
+from .utils.integration import (
     integrate_deep_agent_specifications,
     prepare_deep_agent_input,
     populate_schema_from_deep_agent,
@@ -55,7 +55,7 @@ from .integration import (
     run_deep_agent_for_specifications,
 )
 
-from .schema_populator import (
+from .schema.populator import (
     populate_schema_with_deep_agent,
     extract_field_value_from_standards,
     SchemaPopulatorMemory,
@@ -65,7 +65,7 @@ from .schema_populator import (
     build_populated_schema,
 )
 
-from .sub_agents import (
+from .agents.sub_agents import (
     ExtractorAgent,
     CriticAgent,
     extract_specifications_with_validation,
@@ -89,7 +89,7 @@ from .standards_deep_agent import (
 )
 
 # NORMALIZERS (CONSOLIDATED from value_normalizer, spec_output_normalizer, spec_verifier)
-from .normalizers import (
+from .processing.normalizers import (
     # Value Normalizer
     ValueNormalizer,
     get_value_normalizer,
@@ -180,7 +180,7 @@ from .schema_generation_deep_agent import (
 )
 
 # NEW: Deep Agentic Workflow Orchestrator (Complete workflow management)
-from .deep_agentic_workflow import (
+from .workflows.deep_agentic_workflow import (
     DeepAgenticWorkflowOrchestrator,
     WorkflowSessionManager,
     WorkflowState,
@@ -309,21 +309,21 @@ __all__ = [
     "extract_user_specs_with_shared_llm",
     "generate_llm_specs_with_shared_llm",
 
-    # Schema Failure Memory (NEW - Learn from failures)
-    "SchemaFailureMemory",
-    "FailureEntry",
-    "SuccessEntry",
-    "FailureType",
-    "RecoveryAction",
-    "FailurePattern",
-    "get_schema_failure_memory",
-    "reset_failure_memory",
+    # Schema Failure Memory (COMMENTED OUT - not currently in use)
+    # "SchemaFailureMemory",
+    # "FailureEntry",
+    # "SuccessEntry",
+    # "FailureType",
+    # "RecoveryAction",
+    # "FailurePattern",
+    # "get_schema_failure_memory",
+    # "reset_failure_memory",
 
-    # Adaptive Prompt Engine (NEW - Optimize prompts based on history)
-    "AdaptivePromptEngine",
-    "PromptStrategy",
-    "PromptOptimization",
-    "get_adaptive_prompt_engine",
+    # Adaptive Prompt Engine (COMMENTED OUT - not currently in use)
+    # "AdaptivePromptEngine",
+    # "PromptStrategy",
+    # "PromptOptimization",
+    # "get_adaptive_prompt_engine",
 
     # Schema Generation Deep Agent (NEW - Main orchestrator)
     "SchemaGenerationDeepAgent",

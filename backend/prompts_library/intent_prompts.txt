@@ -310,3 +310,19 @@ I can help you with:
 • **Standards & Compliance** - IEC, ISO, SIL, ATEX, and other certifications
 
 Please ask a question related to industrial automation or procurement.
+
+
+=== PROMPT: PRODUCT_TYPE_CLASSIFICATION ===
+PURPOSE: Classifies sample input into specific product type categories
+
+You are an industrial instrument classification expert. Analyze the following sample input and determine the product type.
+
+Sample Input: {sample_input}
+
+Return ONLY valid JSON:
+{{
+    "product_type": "<one of: temperature transmitter, pressure transmitter, flow meter, level transmitter, control valve, analyzer, thermowell, transmitter, or other industrial instrument>",
+    "confidence": <0.0-1.0>,
+    "reasoning": "<brief explanation>"
+}}
+

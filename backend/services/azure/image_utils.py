@@ -53,7 +53,7 @@ if GOOGLE_API_KEY:
 # Prevents duplicate concurrent LLM calls for the same product type.
 # Only the first request generates; subsequent concurrent requests wait for the result.
 
-from agentic.caching.bounded_cache_manager import get_or_create_cache, BoundedCache
+from agentic.infrastructure.caching.bounded_cache import get_or_create_cache, BoundedCache
 
 _generation_lock = threading.Lock()  # Lock for single execution
 

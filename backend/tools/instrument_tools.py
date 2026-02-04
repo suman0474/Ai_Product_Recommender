@@ -64,36 +64,67 @@ def identify_instruments_tool(requirements: str) -> Dict[str, Any]:
     """
     Identify instruments needed from process requirements.
     Extracts product types, specifications, and creates a Bill of Materials.
+
+    Features:
+    - 3-attempt retry mechanism for LLM-based identification
+    - Extended timeout (120s) to handle complex requirements
+    - Returns partial results on timeout rather than empty list
     """
-    try:
-        llm = create_llm_with_fallback(
-            model=AgenticConfig.PRO_MODEL,
-            temperature=0.1,
-            google_api_key=os.getenv("GOOGLE_API_KEY")
-        )
+    last_error = None
 
-        prompt = ChatPromptTemplate.from_template(INSTRUMENT_IDENTIFICATION_PROMPT)
-        parser = JsonOutputParser()
+    # 3 retry attempts for robustness
+    for attempt in range(1, 4):
+        try:
+            logger.info(f"[Instrument ID] LLM attempt {attempt}/3...")
 
-        chain = prompt | llm | parser
+            llm = create_llm_with_fallback(
+                model=AgenticConfig.PRO_MODEL,
+                temperature=0.1,
+                google_api_key=os.getenv("GOOGLE_API_KEY"),
+                timeout=120  # Increased from default 60s to handle complex requirements
+            )
 
-        result = chain.invoke({"requirements": requirements})
+            prompt = ChatPromptTemplate.from_template(INSTRUMENT_IDENTIFICATION_PROMPT)
+            parser = JsonOutputParser()
 
-        return {
-            "success": True,
-            "project_name": result.get("project_name"),
-            "instruments": result.get("instruments", []),
-            "instrument_count": len(result.get("instruments", [])),
-            "summary": result.get("summary")
-        }
+            chain = prompt | llm | parser
 
-    except Exception as e:
-        logger.error(f"Instrument identification failed: {e}")
-        return {
-            "success": False,
-            "instruments": [],
-            "error": str(e)
-        }
+            result = chain.invoke({"requirements": requirements})
+
+            # Validate result structure
+            if not isinstance(result, dict):
+                logger.warning(f"[Instrument ID] Attempt {attempt}: Invalid response type {type(result)}")
+                last_error = f"Invalid response type: {type(result)}"
+                continue
+
+            instruments = result.get("instruments", [])
+
+            if instruments and isinstance(instruments, list):
+                logger.info(f"[Instrument ID] Attempt {attempt} succeeded: {len(instruments)} instruments identified")
+                return {
+                    "success": True,
+                    "project_name": result.get("project_name"),
+                    "instruments": instruments,
+                    "instrument_count": len(instruments),
+                    "summary": result.get("summary")
+                }
+            else:
+                logger.warning(f"[Instrument ID] Attempt {attempt}: Empty or invalid instruments list")
+                last_error = "Empty instruments list from LLM"
+                continue
+
+        except Exception as e:
+            logger.warning(f"[Instrument ID] Attempt {attempt}: {type(e).__name__} - {str(e)}")
+            last_error = str(e)
+            continue
+
+    # All attempts failed
+    logger.error(f"[Instrument ID] All 3 attempts failed. Last error: {last_error}")
+    return {
+        "success": False,
+        "instruments": [],
+        "error": f"Instrument identification failed after 3 attempts: {last_error}"
+    }
 
 
 # ============================================================================

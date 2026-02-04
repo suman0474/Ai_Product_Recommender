@@ -32,7 +32,7 @@ def _cleanup_bounded_caches():
     Prevents memory leaks and logs final statistics.
     """
     try:
-        from agentic.caching.bounded_cache_manager import (
+        from agentic.infrastructure.caching.bounded_cache import (
             cleanup_all_caches,
             get_all_cache_stats,
             get_registry_summary
@@ -69,7 +69,7 @@ def _shutdown_global_executor():
     Ensures all pending tasks complete before shutdown.
     """
     try:
-        from agentic.global_executor_manager import shutdown_global_executor, get_executor_stats
+        from agentic.infrastructure.state.execution.executor_manager import shutdown_global_executor, get_executor_stats
 
         logger.info("[CLEANUP] Shutting down global executor...")
 

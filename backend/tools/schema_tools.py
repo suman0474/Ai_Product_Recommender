@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field
 import os
 from services.llm.fallback import create_llm_with_fallback
 from config import AgenticConfig
-from prompts_library import load_prompt
+from prompts_library import load_prompt, load_prompt_sections
 logger = logging.getLogger(__name__)
 
 
@@ -341,18 +341,10 @@ def classify_sample_input_intent(sample_input: str) -> Dict[str, Any]:
                 google_api_key=os.getenv("GOOGLE_API_KEY")
             )
             
-            classification_prompt = ChatPromptTemplate.from_template("""
-You are an industrial instrument classification expert. Analyze the following sample input and determine the product type.
-
-Sample Input: {sample_input}
-
-Return ONLY valid JSON:
-{{
-    "product_type": "<one of: temperature transmitter, pressure transmitter, flow meter, level transmitter, control valve, analyzer, thermowell, transmitter, or other industrial instrument>",
-    "confidence": <0.0-1.0>,
-    "reasoning": "<brief explanation>"
-}}
-""")
+            _intent_prompts = load_prompt_sections("intent_prompts")
+            classification_prompt = ChatPromptTemplate.from_template(
+                _intent_prompts["PRODUCT_TYPE_CLASSIFICATION"]
+            )
             
             parser = JsonOutputParser()
             chain = classification_prompt | llm | parser

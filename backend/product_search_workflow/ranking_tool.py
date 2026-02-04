@@ -301,16 +301,52 @@ class RankingTool:
 
             # Normalize field names for consistency
             normalized_products = []
+            
+            # Create lookup dictionaries for pricing info, description, and standards compliance from original vendor analysis
+            pricing_lookup = {}
+            description_lookup = {}
+            standards_lookup = {}
+            matched_reqs_lookup = {}
+            
+            if vendor_analysis and 'vendor_matches' in vendor_analysis:
+                for match in vendor_analysis['vendor_matches']:
+                    key = (match.get('vendor', ''), match.get('productName', match.get('product_name', '')))
+                    pricing_lookup[key] = {
+                        'pricing_url': match.get('pricing_url', ''),
+                        'pricing_source': match.get('pricing_source', '')
+                    }
+                    description_lookup[key] = match.get('product_description', match.get('productDescription', ''))
+                    standards_lookup[key] = match.get('standards_compliance', match.get('standardsCompliance', {}))
+                    matched_reqs_lookup[key] = {
+                        'matched_requirements': match.get('matched_requirements', match.get('matchedRequirements', {})),
+                        'unmatched_requirements': match.get('unmatched_requirements', match.get('unmatchedRequirements', []))
+                    }
+
             for product in ranked_products:
+                p_vendor = product.get('vendor', '')
+                p_name = product.get('product_name', product.get('productName', ''))
+                
+                # Retrieve pricing info, description, standards, and requirements
+                pricing_info = pricing_lookup.get((p_vendor, p_name), {})
+                product_desc = description_lookup.get((p_vendor, p_name), '')
+                standards_info = standards_lookup.get((p_vendor, p_name), {})
+                reqs_info = matched_reqs_lookup.get((p_vendor, p_name), {})
+                
                 normalized = {
-                    'productName': product.get('product_name', product.get('productName', '')),
-                    'vendor': product.get('vendor', ''),
+                    'productName': p_name,
+                    'vendor': p_vendor,
                     'modelFamily': product.get('model_family', product.get('modelFamily', '')),
                     'overallScore': product.get('overall_score', product.get('overallScore', product.get('match_score', product.get('matchScore', 0)))),
                     'matchScore': product.get('match_score', product.get('matchScore', product.get('overall_score', product.get('overallScore', 0)))),
                     'requirementsMatch': product.get('requirements_match', product.get('requirementsMatch', False)),
                     'keyStrengths': self._normalize_reasoning(product.get('key_strengths', product.get('keyStrengths', []))),
-                    'concerns': self._normalize_reasoning(product.get('concerns', product.get('limitations', [])))
+                    'concerns': self._normalize_reasoning(product.get('concerns', product.get('limitations', []))),
+                    'productDescription': product_desc,
+                    'standardsCompliance': standards_info,
+                    'matchedRequirements': reqs_info.get('matched_requirements', {}),
+                    'unmatchedRequirements': reqs_info.get('unmatched_requirements', []),
+                    'pricing_url': pricing_info.get('pricing_url', ''),
+                    'pricing_source': pricing_info.get('pricing_source', '')
                 }
                 normalized_products.append(normalized)
 
@@ -349,6 +385,26 @@ class RankingTool:
             # Handle both 'ranked_products' and 'rankedProducts' keys
             ranked_products = ranking_dict.get('ranked_products', ranking_dict.get('rankedProducts', []))
 
+            # Create lookup dictionaries for pricing info, description, and standards compliance from original vendor analysis
+            pricing_lookup = {}
+            description_lookup = {}
+            standards_lookup = {}
+            matched_reqs_lookup = {}
+            
+            if vendor_analysis and 'vendor_matches' in vendor_analysis:
+                for match in vendor_analysis['vendor_matches']:
+                    key = (match.get('vendor', ''), match.get('productName', match.get('product_name', '')))
+                    pricing_lookup[key] = {
+                        'pricing_url': match.get('pricing_url', ''),
+                        'pricing_source': match.get('pricing_source', '')
+                    }
+                    description_lookup[key] = match.get('product_description', match.get('productDescription', ''))
+                    standards_lookup[key] = match.get('standards_compliance', match.get('standardsCompliance', {}))
+                    matched_reqs_lookup[key] = {
+                        'matched_requirements': match.get('matched_requirements', match.get('matchedRequirements', {})),
+                        'unmatched_requirements': match.get('unmatched_requirements', match.get('unmatchedRequirements', []))
+                    }
+
             # Normalize field names
             normalized_products = []
             for product in ranked_products:
@@ -356,15 +412,30 @@ class RankingTool:
                 score = product.get('match_score', product.get('matchScore', product.get('overall_score', 0)))
                 computed_match = score >= 80
                 
+                p_vendor = product.get('vendor', '')
+                p_name = product.get('product_name', product.get('productName', ''))
+                
+                # Retrieve pricing info, description, standards, and requirements
+                pricing_info = pricing_lookup.get((p_vendor, p_name), {})
+                product_desc = description_lookup.get((p_vendor, p_name), '')
+                standards_info = standards_lookup.get((p_vendor, p_name), {})
+                reqs_info = matched_reqs_lookup.get((p_vendor, p_name), {})
+
                 normalized = {
-                    'productName': product.get('product_name', product.get('productName', '')),
-                    'vendor': product.get('vendor', ''),
+                    'productName': p_name,
+                    'vendor': p_vendor,
                     'modelFamily': product.get('model_family', product.get('modelFamily', '')),
                     'overallScore': product.get('overall_score', product.get('overallScore', product.get('match_score', 0))),
                     'matchScore': product.get('match_score', product.get('matchScore', product.get('overall_score', 0))),
                     'requirementsMatch': product.get('requirements_match', product.get('requirementsMatch', computed_match)),
                     'keyStrengths': product.get('key_strengths', product.get('keyStrengths', product.get('reasoning', ''))),
-                    'concerns': product.get('concerns', product.get('limitations', ''))
+                    'concerns': product.get('concerns', product.get('limitations', '')),
+                    'productDescription': product_desc,
+                    'standardsCompliance': standards_info,
+                    'matchedRequirements': reqs_info.get('matched_requirements', {}),
+                    'unmatchedRequirements': reqs_info.get('unmatched_requirements', []),
+                    'pricing_url': pricing_info.get('pricing_url', ''),
+                    'pricing_source': pricing_info.get('pricing_source', '')
                 }
                 normalized_products.append(normalized)
 

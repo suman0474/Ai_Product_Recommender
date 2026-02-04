@@ -1,0 +1,98 @@
+{
+  "failures": {},
+  "successes": {
+    "Coriolis Flow Meter": [
+      {
+        "success_id": "succ_Coriolis Flow Meter_20260204154221504367",
+        "product_type": "Coriolis Flow Meter",
+        "prompt_hash": "b44e6b3d45afff37",
+        "prompt_preview": "[parallel generation]",
+        "fields_populated": 0,
+        "total_fields": 60,
+        "confidence_score": 0.0,
+        "timestamp": "2026-02-04T15:42:21.504897",
+        "duration_ms": 18784,
+        "sources_used": []
+      }
+    ],
+    "Pressure Transmitter": [
+      {
+        "success_id": "succ_Pressure Transmitter_20260204154228168237",
+        "product_type": "Pressure Transmitter",
+        "prompt_hash": "b44e6b3d45afff37",
+        "prompt_preview": "[parallel generation]",
+        "fields_populated": 0,
+        "total_fields": 60,
+        "confidence_score": 0.0,
+        "timestamp": "2026-02-04T15:42:28.168237",
+        "duration_ms": 37509,
+        "sources_used": []
+      }
+    ],
+    "Magnetic Flow Transmitter": [
+      {
+        "success_id": "succ_Magnetic Flow Transmitter_20260204165244083666",
+        "product_type": "Magnetic Flow Transmitter",
+        "prompt_hash": "b44e6b3d45afff37",
+        "prompt_preview": "[parallel generation]",
+        "fields_populated": 0,
+        "total_fields": 60,
+        "confidence_score": 0.0,
+        "timestamp": "2026-02-04T16:52:44.083666",
+        "duration_ms": 19475,
+        "sources_used": []
+      }
+    ],
+    "Spring-Loaded Pressure Relief Valve": [
+      {
+        "success_id": "succ_Spring-Loaded Pressure Relief Valve_20260204165415184729",
+        "product_type": "Spring-Loaded Pressure Relief Valve",
+        "prompt_hash": "b44e6b3d45afff37",
+        "prompt_preview": "[parallel generation]",
+        "fields_populated": 0,
+        "total_fields": 60,
+        "confidence_score": 0.0,
+        "timestamp": "2026-02-04T16:54:15.185302",
+        "duration_ms": 37620,
+        "sources_used": []
+      }
+    ],
+    "Variable Area Flow Transmitter": [
+      {
+        "success_id": "succ_Variable Area Flow Transmitter_20260204165631636608",
+        "product_type": "Variable Area Flow Transmitter",
+        "prompt_hash": "b44e6b3d45afff37",
+        "prompt_preview": "[parallel generation]",
+        "fields_populated": 0,
+        "total_fields": 60,
+        "confidence_score": 0.0,
+        "timestamp": "2026-02-04T16:56:31.636608",
+        "duration_ms": 19142,
+        "sources_used": []
+      }
+    ],
+    "Discharge Pressure Transmitter": [
+      {
+        "success_id": "succ_Discharge Pressure Transmitter_20260204173758865464",
+        "product_type": "Discharge Pressure Transmitter",
+        "prompt_hash": "b44e6b3d45afff37",
+        "prompt_preview": "[parallel generation]",
+        "fields_populated": 0,
+        "total_fields": 60,
+        "confidence_score": 0.0,
+        "timestamp": "2026-02-04T17:37:58.865464",
+        "duration_ms": 19795,
+        "sources_used": []
+      }
+    ]
+  },
+  "optimized_prompts": {},
+  "stats": {
+    "total_failures": 0,
+    "total_successes": 6,
+    "patterns_detected": 0,
+    "recoveries_attempted": 0,
+    "recoveries_successful": 0
+  },
+  "saved_at": "2026-02-04T17:37:58.867025"
+}

@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 # [PHASE 1] Using BoundedCache with TTL/LRU to prevent unbounded memory growth
 # PDF text can be large - limit cache size appropriately
-from agentic.caching.bounded_cache_manager import get_or_create_cache, BoundedCache
+from agentic.infrastructure.caching.bounded_cache import get_or_create_cache, BoundedCache
 
 _pdf_text_cache: BoundedCache = get_or_create_cache(
     name="pdf_text",

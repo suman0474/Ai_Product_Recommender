@@ -134,7 +134,7 @@ class SchemaGenerationDeepAgent:
     def failure_memory(self):
         """Lazy load failure memory."""
         if self._failure_memory is None:
-            from .schema_failure_memory import get_schema_failure_memory
+            from .schema.failure_memory import get_schema_failure_memory
             self._failure_memory = get_schema_failure_memory()
         return self._failure_memory
 
@@ -262,7 +262,7 @@ class SchemaGenerationDeepAgent:
             logger.error(f"[DEEP_AGENT] Schema generation failed: {e}")
 
             # Record failure
-            from .schema_failure_memory import FailureType
+            from .schema.failure_memory import FailureType
             self.failure_memory.record_failure(
                 product_type=product_type,
                 failure_type=FailureType.SCHEMA_MISMATCH,
@@ -383,7 +383,7 @@ class SchemaGenerationDeepAgent:
             )
 
             # Call Standards RAG
-            from agentic.standards_rag.standards_rag_workflow import run_standards_rag_workflow
+            from agentic.workflows.standards_rag.standards_rag_workflow import run_standards_rag_workflow
 
             result = run_standards_rag_workflow(
                 question=prompt,
@@ -689,7 +689,7 @@ class SchemaGenerationDeepAgent:
 
         try:
             # Get recommended recovery action
-            from .schema_failure_memory import FailureType, RecoveryAction
+            from .schema.failure_memory import FailureType, RecoveryAction
 
             recommended = self.failure_memory.get_recommended_recovery(
                 product_type, FailureType.SCHEMA_MISMATCH

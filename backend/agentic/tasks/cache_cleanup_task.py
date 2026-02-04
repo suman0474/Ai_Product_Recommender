@@ -88,7 +88,7 @@ class CacheCleanupTask:
 
     def _run(self):
         """Main cleanup loop."""
-        from agentic.caching.bounded_cache_manager import (
+        from agentic.infrastructure.caching.bounded_cache import (
             cleanup_all_caches,
             get_all_cache_stats,
             get_registry_summary

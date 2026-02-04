@@ -14,8 +14,8 @@ from typing import Dict, Any
 from flask import Blueprint, request, jsonify, session
 
 # Import consolidated decorators and utilities
-from agentic.auth_decorators import login_required
-from agentic.api_utils import api_response, handle_errors
+from agentic.infrastructure.utils.auth_decorators import login_required
+from agentic.infrastructure.api.utils import api_response, handle_errors
 
 logger = logging.getLogger(__name__)
 
